@@ -1,7 +1,7 @@
 import { createApiModule, problemResponse, type ApiModule } from "../../http/openapi.ts";
 import { ApiError } from "../../http/problem.ts";
 import type { AuthService } from "./service.ts";
-import { loginQuerySchema, loginResponseSchema, loginSchema } from "./schemas.ts";
+import { loginQuerySchema, loginResponseSchema, loginSchema, userSchema } from "./schemas.ts";
 
 export function createAuthModule(auth: AuthService): ApiModule {
   const api = createApiModule();
@@ -38,5 +38,52 @@ export function createAuthModule(auth: AuthService): ApiModule {
       res.set("Cache-Control", "no-store").json(result);
     },
   );
+
+  api.register(
+    {
+      method: "get",
+      path: "/api/auth/me",
+      operationId: "getCurrentUser",
+      summary: "Current user",
+      request: { query: loginQuerySchema },
+      responses: {
+        200: {
+          description: "Authenticated user",
+          content: { "application/json": { schema: userSchema } },
+        },
+        400: problemResponse("Invalid query"),
+        401: problemResponse("Invalid session"),
+      },
+    },
+    (req, res) => {
+      if (!loginQuerySchema.safeParse(req.query).success)
+        throw new ApiError(400, "Query parameters are not supported.");
+      const user = auth.authenticate(req.headers.authorization);
+      if (!user) throw new ApiError(401, "Invalid session.");
+      res.set("Cache-Control", "no-store").json(user);
+    },
+  );
+
+  api.register(
+    {
+      method: "post",
+      path: "/api/auth/logout",
+      operationId: "logout",
+      summary: "Sign out",
+      request: { query: loginQuerySchema },
+      responses: {
+        204: { description: "Session revoked" },
+        400: problemResponse("Invalid query"),
+        401: problemResponse("Invalid session"),
+      },
+    },
+    (req, res) => {
+      if (!loginQuerySchema.safeParse(req.query).success)
+        throw new ApiError(400, "Query parameters are not supported.");
+      if (!auth.logout(req.headers.authorization)) throw new ApiError(401, "Invalid session.");
+      res.status(204).end();
+    },
+  );
+
   return api;
 }

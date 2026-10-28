@@ -26,6 +26,11 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
   return timingSafeEqual(actual, expected);
 }
 
+function tokenFromAuthorization(authorization: string | undefined): string | null {
+  const match = /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(authorization ?? "");
+  return match?.[1] ?? null;
+}
+
 export function createAuthService(db: Database) {
   const sessions = new Map<string, AuthUser>();
   return {
@@ -43,8 +48,12 @@ export function createAuthService(db: Database) {
       return { token, user };
     },
     authenticate(authorization: string | undefined): AuthUser | null {
-      const match = /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(authorization ?? "");
-      return match?.[1] ? (sessions.get(match[1]) ?? null) : null;
+      const token = tokenFromAuthorization(authorization);
+      return token ? (sessions.get(token) ?? null) : null;
+    },
+    logout(authorization: string | undefined): boolean {
+      const token = tokenFromAuthorization(authorization);
+      return token ? sessions.delete(token) : false;
     },
   };
 }

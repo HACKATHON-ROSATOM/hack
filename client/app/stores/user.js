@@ -1,96 +1,63 @@
 import { defineStore } from 'pinia'
+import { computed, ref } from 'vue'
 
-const storageKey = 'service-session'
 const roles = { DUTY: 'dispatcher', ENGINEER: 'engineer', DIRECTOR: 'director' }
-const restores = new WeakMap()
 
-function validSession(session) {
-  return typeof session?.token === 'string' && session.token.length > 0 &&
-    typeof session.user?.id === 'string' && typeof session.user?.name === 'string' &&
-    Object.hasOwn(roles, session.user?.role)
+function validUser(user) {
+  return typeof user?.id === 'string' && typeof user?.name === 'string' &&
+    Object.hasOwn(roles, user.role)
 }
 
-export const useUserStore = defineStore('user', {
-  state: () => ({
-    user: null,
-    token: null,
-    role: null,
-    sessionVersion: 0,
-  }),
-  actions: {
-    async login(login, password) {
-      const session = await $fetch('/api/auth/login', {
-        method: 'POST',
-        body: { login, password },
-      })
-      if (!validSession(session)) throw new Error('Некорректный ответ сервера')
-      this.sessionVersion++
-      this.user = session.user
-      this.token = session.token
-      this.role = roles[session.user.role]
-      if (import.meta.client) localStorage.setItem(storageKey, JSON.stringify(session))
-      return session.user
-    },
-    logout() {
-      this.sessionVersion++
-      this.user = null
-      this.token = null
-      this.role = null
-      if (import.meta.client) localStorage.removeItem(storageKey)
-    },
-    async restore() {
-      if (import.meta.server) return false
-      if (this.token && this.user) return true
-      if (restores.has(this)) return restores.get(this)
+export const useUserStore = defineStore('user', () => {
+  const user = ref(null)
+  const role = computed(() => roles[user.value?.role] ?? null)
 
-      const version = this.sessionVersion
-      const restore = (async () => {
-        let session
-        try {
-          session = JSON.parse(localStorage.getItem(storageKey) || 'null')
-        } catch {
-          localStorage.removeItem(storageKey)
-          return false
-        }
-        if (!validSession(session)) {
-          localStorage.removeItem(storageKey)
-          return false
-        }
-        try {
-          await $fetch('/api/requests', { headers: { Authorization: `Bearer ${session.token}` } })
-        } catch (error) {
-          if (error?.statusCode === 401 || error?.response?.status === 401) {
-            if (this.sessionVersion === version) this.logout()
-            return false
-          }
-          throw error
-        }
-        if (this.sessionVersion !== version) return Boolean(this.token && this.user)
-        this.user = session.user
-        this.token = session.token
-        this.role = roles[session.user.role]
-        return true
-      })()
-      restores.set(this, restore)
-      try {
-        return await restore
-      } finally {
-        if (restores.get(this) === restore) restores.delete(this)
+  function setUser(value) {
+    if (!validUser(value)) throw new Error('Invalid server response')
+    user.value = value
+  }
+
+  async function login(login, password) {
+    const value = await $fetch('/api/auth/login', {
+      method: 'POST',
+      body: { login, password },
+    })
+    setUser(value)
+    return value
+  }
+
+  async function logout() {
+    user.value = null
+    try {
+      await $fetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      // The local session is cleared even if the API is unavailable.
+    }
+  }
+
+  async function restore() {
+    if (user.value) return true
+    try {
+      const requestFetch = import.meta.server ? useRequestFetch() : $fetch
+      setUser(await requestFetch('/api/auth/me'))
+      return true
+    } catch (error) {
+      if (error?.statusCode === 401 || error?.response?.status === 401) return false
+      throw error
+    }
+  }
+
+  async function api(path, options = {}) {
+    try {
+      return await $fetch(path, options)
+    } catch (error) {
+      if (error?.statusCode === 401 || error?.response?.status === 401) {
+        await logout()
+        if (import.meta.client) await navigateTo('/login?session=expired')
       }
-    },
-    async api(path, options = {}) {
-      const token = this.token
-      const headers = new Headers(options.headers)
-      if (token) headers.set('Authorization', `Bearer ${token}`)
-      try {
-        return await $fetch(path, { ...options, headers })
-      } catch (error) {
-        if ((error?.statusCode === 401 || error?.response?.status === 401) && token === this.token) {
-          this.logout()
-          if (import.meta.client) await navigateTo('/login?session=expired')
-        }
-        throw error
-      }
-    },
-  },
+      throw error
+    }
+  }
+
+  return { user, role, login, logout, restore, api }
 })

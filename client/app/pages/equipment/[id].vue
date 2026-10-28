@@ -1,5 +1,6 @@
 <script setup>
 import { useUserStore } from '~/stores/user'
+import { apiProblem } from '~/utils/apiProblem'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -23,16 +24,15 @@ async function load() {
   equipment.value = null
   requests.value = []
   try {
-    await userStore.restore()
     equipment.value = await userStore.api(`/api/equipment/${encodeURIComponent(route.params.id)}`)
     try {
       const result = await userStore.api('/api/requests')
       requests.value = result.items
     } catch (err) {
-      requestsError.value = err.data?.detail || err.message || 'Не удалось загрузить заявки.'
+      requestsError.value = apiProblem(err).detail
     }
   } catch (err) {
-    error.value = err.statusCode === 404 ? 'Оборудование не найдено.' : (err.data?.detail || err.message || 'Не удалось загрузить оборудование.')
+    error.value = apiProblem(err).detail
   } finally {
     loading.value = false
   }

@@ -1,5 +1,6 @@
 <script setup>
 import { useUserStore } from '~/stores/user'
+import { apiProblem } from '~/utils/apiProblem'
 import StatCards from '~/components/home/StatCards.vue'
 
 const userStore = useUserStore()
@@ -50,7 +51,6 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    await userStore.restore()
     const [tickets, loads, people] = await Promise.all([
       userStore.api('/api/requests'),
       userStore.api('/api/requests/analytics/workload'),
@@ -60,7 +60,7 @@ async function load() {
     workload.value = loads.items
     engineers.value = people.items
   } catch (err) {
-    error.value = err.data?.detail || err.message || 'Не удалось загрузить сводку.'
+    error.value = apiProblem(err).detail
   } finally {
     loading.value = false
   }

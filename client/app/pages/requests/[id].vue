@@ -1,6 +1,7 @@
 <script setup>
 import { useUserStore } from '~/stores/user'
-import { typeLabels, statusLabels, priorityLabels, actionLabels, formatDate, inputDate, errorMessage } from '~/components/requests/requestUtils'
+import { typeLabels, statusLabels, priorityLabels, actionLabels, formatDate, inputDate } from '~/components/requests/requestUtils'
+import { apiProblem } from '~/utils/apiProblem'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -46,14 +47,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    await userStore.restore()
     const [data, people, allUsers] = await Promise.all([userStore.api(`/api/requests/${route.params.id}`), userStore.api('/api/engineers'), userStore.api('/api/users')])
     const object = await userStore.api(`/api/equipment/${data.equipmentId}`)
     engineers.value = people.items
     users.value = allUsers.items
     equipment.value = object
     setRequest(data)
-  } catch (err) { error.value = errorMessage(err) } finally { loading.value = false }
+  } catch (err) { error.value = apiProblem(err).detail } finally { loading.value = false }
 }
 onMounted(load)
 watch(() => route.params.id, () => { if (import.meta.client) load() })
@@ -65,7 +65,7 @@ async function update(path, method, body) {
     const data = await userStore.api(`/api/requests/${request.value.id}/${path}`, { method, body })
     setRequest(data)
     return true
-  } catch (err) { actionError.value = errorMessage(err); return false } finally { busy.value = false }
+  } catch (err) { actionError.value = apiProblem(err).detail; return false } finally { busy.value = false }
 }
 async function assign() {
   if (!assigneeDraft.value) { actionError.value = 'Выберите инженера.'; return }

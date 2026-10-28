@@ -3,7 +3,7 @@ export default defineNuxtConfig({
   ui: { colorMode: false },
   css: ['~/assets/css/main.css'],
   runtimeConfig: {
-    apiBase: '',
+    apiBase: 'http://127.0.0.1:3003',
   },
   app: {
     head: {

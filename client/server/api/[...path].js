@@ -1,11 +1,19 @@
-import { createError, getRequestURL, proxyRequest } from 'h3'
+import { getCookie, getRequestURL, proxyRequest } from 'h3'
+import { sendProblem } from '../utils/problem'
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const { apiBase } = useRuntimeConfig(event)
   if (!apiBase) {
-    throw createError({ statusCode: 500, statusMessage: 'NUXT_API_BASE is not configured' })
+    return sendProblem(event, 500, 'API server is not configured.')
   }
   const requestUrl = getRequestURL(event)
   const target = `${apiBase.replace(/\/+$/, '')}${requestUrl.pathname}${requestUrl.search}`
-  return proxyRequest(event, target)
+  const token = getCookie(event, 'auth_token')
+  try {
+    return await proxyRequest(event, target, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+  } catch {
+    return sendProblem(event, 502, 'API server is unavailable.')
+  }
 })

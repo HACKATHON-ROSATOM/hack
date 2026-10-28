@@ -1,22 +1,32 @@
 <script setup>
 import { useUserStore } from '~/stores/user'
-import { typeLabels, priorityLabels, errorMessage, loadEquipment } from '~/components/requests/requestUtils'
+import { typeLabels, priorityLabels, loadEquipment } from '~/components/requests/requestUtils'
+import { apiProblem } from '~/utils/apiProblem'
 
 const route = useRoute()
 const userStore = useUserStore()
 const equipment = ref([])
 const engineers = ref([])
-const equipmentId = ref('')
-const assigneeId = ref('unassigned')
-const kind = ref('')
-const priority = ref('MEDIUM')
-const description = ref('')
-const due = ref('')
+const state = reactive({
+  kind: '',
+  equipmentId: '',
+  description: '',
+  priority: 'MEDIUM',
+  due: '',
+  assigneeId: 'unassigned',
+})
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
-const equipmentOptions = computed(() => equipment.value.map((item) => ({ label: `${item.name}${item.externalId ? ` (${item.externalId})` : ''}${item.location ? ` — ${item.location}` : ''}`, value: item.id })))
-const engineerOptions = computed(() => [{ label: 'Не назначен', value: 'unassigned' }, ...engineers.value.map((item) => ({ label: item.name, value: item.id }))])
+const formError = ref('')
+const equipmentOptions = computed(() => equipment.value.map((item) => ({
+  label: `${item.name}${item.externalId ? ` (${item.externalId})` : ''}${item.location ? ` — ${item.location}` : ''}`,
+  value: item.id,
+})))
+const engineerOptions = computed(() => [
+  { label: 'Не назначен', value: 'unassigned' },
+  ...engineers.value.map((item) => ({ label: item.name, value: item.id })),
+])
 const kindOptions = Object.entries(typeLabels).map(([value, label]) => ({ value, label }))
 const priorityOptions = Object.entries(priorityLabels).map(([value, label]) => ({ value, label }))
 
@@ -24,29 +34,50 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    await userStore.restore()
     if (userStore.role !== 'dispatcher') return
     const [objects, people] = await Promise.all([loadEquipment(userStore), userStore.api('/api/engineers')])
     equipment.value = objects
     engineers.value = people.items
-    if (objects.some((item) => item.id === route.query.equipmentId)) equipmentId.value = route.query.equipmentId
-  } catch (err) { error.value = errorMessage(err) } finally { loading.value = false }
+    if (objects.some((item) => item.id === route.query.equipmentId)) {
+      state.equipmentId = route.query.equipmentId
+    }
+  } catch (err) {
+    error.value = apiProblem(err).detail
+  } finally {
+    loading.value = false
+  }
 }
 onMounted(load)
 
+function validate(value) {
+  const errors = []
+  if (!value.kind) errors.push({ name: 'kind', message: 'Выберите тип заявки.' })
+  if (!value.equipmentId) errors.push({ name: 'equipmentId', message: 'Выберите оборудование.' })
+  if (!value.description.trim()) errors.push({ name: 'description', message: 'Введите описание.' })
+  if (!value.priority) errors.push({ name: 'priority', message: 'Выберите приоритет.' })
+  if (!value.due || Number.isNaN(new Date(value.due).getTime())) errors.push({ name: 'due', message: 'Укажите корректный срок.' })
+  return errors
+}
+
 async function create() {
-  error.value = ''
-  if (!kind.value || !equipmentId.value || !description.value.trim() || !priority.value || !due.value || Number.isNaN(new Date(due.value).getTime())) {
-    error.value = 'Заполните тип, оборудование, описание, приоритет и корректный срок.'
-    return
-  }
+  formError.value = ''
   saving.value = true
   try {
-    const body = { type: kind.value, equipmentId: equipmentId.value, description: description.value.trim(), priority: priority.value, initialDeadline: new Date(due.value).toISOString() }
-    if (assigneeId.value !== 'unassigned') body.assigneeId = assigneeId.value
+    const body = {
+      type: state.kind,
+      equipmentId: state.equipmentId,
+      description: state.description.trim(),
+      priority: state.priority,
+      initialDeadline: new Date(state.due).toISOString(),
+    }
+    if (state.assigneeId !== 'unassigned') body.assigneeId = state.assigneeId
     const created = await userStore.api('/api/requests', { method: 'POST', body })
     await navigateTo(`/requests/${created.id}`)
-  } catch (err) { error.value = errorMessage(err) } finally { saving.value = false }
+  } catch (err) {
+    formError.value = apiProblem(err).detail
+  } finally {
+    saving.value = false
+  }
 }
 </script>
 
@@ -59,15 +90,16 @@ async function create() {
       <template v-else>
         <p v-if="error" role="alert" class="mb-4 text-red-700">{{ error }}</p>
         <div v-if="!equipment.length" class="space-y-3"><p>Оборудование не загружено или отсутствует. Создание заявки невозможно.</p><UButton variant="outline" @click="load">Повторить загрузку</UButton></div>
-        <form v-else class="space-y-4" @submit.prevent="create">
-          <UFormField label="Тип заявки" required><USelect v-model="kind" :items="kindOptions" value-key="value" placeholder="Выберите тип" class="w-full" /></UFormField>
-          <UFormField label="Оборудование" required><USelect v-model="equipmentId" :items="equipmentOptions" value-key="value" placeholder="Выберите объект" class="w-full" /></UFormField>
-          <UFormField label="Описание" required><UTextarea v-model="description" maxlength="2000" placeholder="Опишите задачу" :rows="4" class="w-full" /></UFormField>
-          <UFormField label="Приоритет" required><USelect v-model="priority" :items="priorityOptions" value-key="value" class="w-full" /></UFormField>
-          <UFormField label="Плановый срок" required><UInput v-model="due" type="datetime-local" class="w-full" /></UFormField>
-          <UFormField label="Исполнитель"><USelect v-model="assigneeId" :items="engineerOptions" value-key="value" class="w-full" /><p v-if="!engineers.length" class="mt-1 text-sm text-gray-600">Нет доступных инженеров. Заявку можно назначить позже.</p></UFormField>
+        <UForm v-else :state="state" :validate="validate" class="space-y-4" @submit="create">
+          <UFormField name="kind" label="Тип заявки" required><USelect v-model="state.kind" :items="kindOptions" value-key="value" placeholder="Выберите тип" class="w-full" /></UFormField>
+          <UFormField name="equipmentId" label="Оборудование" required><USelect v-model="state.equipmentId" :items="equipmentOptions" value-key="value" placeholder="Выберите объект" class="w-full" /></UFormField>
+          <UFormField name="description" label="Описание" required><UTextarea v-model="state.description" maxlength="2000" placeholder="Опишите задачу" :rows="4" class="w-full" /></UFormField>
+          <UFormField name="priority" label="Приоритет" required><USelect v-model="state.priority" :items="priorityOptions" value-key="value" class="w-full" /></UFormField>
+          <UFormField name="due" label="Плановый срок" required><UInput v-model="state.due" type="datetime-local" class="w-full" /></UFormField>
+          <UFormField name="assigneeId" label="Исполнитель"><USelect v-model="state.assigneeId" :items="engineerOptions" value-key="value" class="w-full" /><p v-if="!engineers.length" class="mt-1 text-sm text-gray-600">Нет доступных инженеров. Заявку можно назначить позже.</p></UFormField>
+          <p v-if="formError" role="alert" class="text-red-700">{{ formError }}</p>
           <div class="flex justify-end gap-2"><UButton to="/requests" variant="outline">Отмена</UButton><UButton type="submit" :loading="saving" :disabled="saving">Создать заявку</UButton></div>
-        </form>
+        </UForm>
       </template>
     </UCard>
   </main>

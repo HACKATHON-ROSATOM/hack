@@ -73,6 +73,19 @@ describe("authentication", () => {
         });
         expect(auth.authenticate(`Bearer ${result.token}`)).toEqual(result.user);
         expect(createAuthService(db).authenticate(`Bearer ${result.token}`)).toBeNull();
+        const headers = { Authorization: `Bearer ${result.token}` };
+        const current = await fetch(`http://127.0.0.1:${address.port}/api/auth/me`, { headers });
+        expect(current.status).toBe(200);
+        expect(await current.json()).toEqual(result.user);
+        const logout = await fetch(`http://127.0.0.1:${address.port}/api/auth/logout`, {
+          method: "POST",
+          headers,
+        });
+        expect(logout.status).toBe(204);
+        expect(auth.authenticate(`Bearer ${result.token}`)).toBeNull();
+        expect(
+          (await fetch(`http://127.0.0.1:${address.port}/api/auth/me`, { headers })).status,
+        ).toBe(401);
       }
       const wrong = await login({ login: "duty", password: "wrong" });
       const missing = await login({ login: "missing", password: "wrong" });
