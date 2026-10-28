@@ -1,6 +1,7 @@
 <script setup>
 import { useUserStore } from '~/stores/user'
 import { apiProblem } from '~/utils/apiProblem'
+import { priorityColors, priorityLabels, statusColors, statusLabels } from '~/components/requests/requestUtils'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -44,11 +45,11 @@ watch(() => route.params.id, load)
 <template>
   <main class="mx-auto max-w-6xl space-y-6 px-4 py-10">
     <p v-if="loading" role="status">Загрузка оборудования…</p>
-    <div v-else-if="error" role="alert" class="space-y-2 text-red-700"><p>{{ error }}</p><UButton variant="outline" @click="load">Повторить</UButton></div>
+    <div v-else-if="error" role="alert" class="space-y-2 text-red-700"><p>{{ error }}</p><UButton color="warning" @click="load">Повторить</UButton></div>
     <template v-else-if="equipment">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div><h1 class="text-2xl font-semibold text-gray-900">{{ equipment.name }}</h1><p class="mt-1 text-sm text-gray-600">ID {{ equipment.externalId || 'Неизвестно' }}</p></div>
-        <UButton v-if="userStore.role === 'dispatcher'" :to="{ path: '/requests/new', query: { equipmentId: equipment.id } }">Создать заявку</UButton>
+        <UButton v-if="userStore.role === 'dispatcher'" color="primary" :to="{ path: '/requests/new', query: { equipmentId: equipment.id } }">Создать заявку</UButton>
       </div>
       <UCard class="bg-white ring-1 ring-brand/15">
         <h2 class="mb-4 text-lg font-semibold text-gray-900">Атрибуты оборудования</h2>
@@ -76,7 +77,14 @@ watch(() => route.params.id, load)
       <UCard class="bg-white ring-1 ring-brand/15">
         <h2 class="mb-2 text-lg font-semibold text-gray-900">Текущие заявки</h2>
         <p v-if="requestsError" role="alert" class="text-sm text-red-700">{{ requestsError }}</p>
-        <ul v-else-if="currentRequests.length" class="space-y-2"><li v-for="item in currentRequests" :key="item.id"><NuxtLink class="text-brand underline" :to="`/requests/${item.id}`">Заявка №{{ item.ticketNumber }} — {{ item.description }}</NuxtLink></li></ul>
+        <ul v-else-if="currentRequests.length" class="space-y-3">
+          <li v-for="item in currentRequests" :key="item.id" class="flex flex-wrap items-center gap-2">
+            <NuxtLink class="text-brand underline" :to="`/requests/${item.id}`">Заявка №{{ item.ticketNumber }} — {{ item.description }}</NuxtLink>
+            <UBadge :color="statusColors[item.status] || 'neutral'" variant="soft">{{ statusLabels[item.status] || item.status }}</UBadge>
+            <UBadge :color="priorityColors[item.priority] || 'neutral'" variant="soft">{{ priorityLabels[item.priority] || item.priority }}</UBadge>
+            <UBadge v-if="item.isOverdue" color="error" variant="soft">Просрочена</UBadge>
+          </li>
+        </ul>
         <p v-else class="text-sm text-gray-600">Текущих заявок нет.</p>
       </UCard>
     </template>

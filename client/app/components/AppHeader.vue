@@ -44,7 +44,7 @@ const isActive = (href) =>
 
     <div v-if="userStore.user" class="flex w-full items-center justify-between gap-4 sm:w-auto">
       <p class="font-medium text-gray-900">{{ roleLabels[userStore.role] }}</p>
-      <UButton color="neutral" variant="outline" @click="logout">Выйти</UButton>
+      <UButton color="error" variant="soft" @click="logout">Выйти</UButton>
     </div>
   </header>
 </template>

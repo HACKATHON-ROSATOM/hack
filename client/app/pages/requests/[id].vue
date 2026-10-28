@@ -1,6 +1,6 @@
 <script setup>
 import { useUserStore } from '~/stores/user'
-import { typeLabels, statusLabels, priorityLabels, actionLabels, formatDate, inputDate } from '~/components/requests/requestUtils'
+import { typeLabels, statusLabels, priorityLabels, statusColors, priorityColors, actionLabels, formatDate, inputDate } from '~/components/requests/requestUtils'
 import { apiProblem } from '~/utils/apiProblem'
 
 const route = useRoute()
@@ -111,9 +111,13 @@ async function convert() {
 <template>
   <main class="mx-auto max-w-6xl space-y-6 px-4 py-10">
     <p v-if="loading" role="status">Загрузка заявки…</p>
-    <div v-else-if="error" role="alert" class="space-y-3 text-red-700"><p>{{ error }}</p><UButton variant="outline" @click="load">Повторить</UButton><UButton to="/requests" variant="link">К списку заявок</UButton></div>
+    <div v-else-if="error" role="alert" class="space-y-3 text-red-700"><p>{{ error }}</p><UButton color="warning" @click="load">Повторить</UButton><UButton color="primary" to="/requests" variant="link">К списку заявок</UButton></div>
     <template v-else-if="request">
-      <div class="flex flex-wrap items-center gap-3"><h1 class="text-2xl font-semibold text-gray-900">Заявка №{{ request.ticketNumber }}</h1><UBadge color="primary" variant="soft">{{ statusLabels[request.status] || request.status }}</UBadge></div>
+      <div class="flex flex-wrap items-center gap-3">
+        <h1 class="text-2xl font-semibold text-gray-900">Заявка №{{ request.ticketNumber }}</h1>
+        <UBadge :color="statusColors[request.status] || 'neutral'" variant="soft">{{ statusLabels[request.status] || request.status }}</UBadge>
+        <UBadge v-if="request.isOverdue" color="error" variant="soft">Просрочена</UBadge>
+      </div>
       <UCard class="bg-white ring-1 ring-brand/15">
         <h2 class="mb-4 text-lg font-semibold text-gray-900">Данные заявки</h2>
         <dl class="grid gap-4 sm:grid-cols-2">
@@ -121,8 +125,8 @@ async function convert() {
           <div><dt class="text-sm text-gray-600">Источник</dt><dd>{{ request.source === 'AUTO' ? 'Автоматическая' : 'Ручная' }}</dd></div>
           <div><dt class="text-sm text-gray-600">Объект</dt><dd><NuxtLink v-if="equipment && request.equipmentId" :to="'/equipment/' + request.equipmentId" class="text-brand hover:text-brand-hover">{{ equipment.name }}{{ equipment.externalId ? ` (${equipment.externalId})` : '' }}</NuxtLink><span v-else>Не указано</span></dd></div>
           <div v-if="request.telemetryTurbineId || request.snapshot?.turbineNumber != null"><dt class="text-sm text-gray-600">Телеметрическая ВЭУ</dt><dd>{{ request.snapshot?.turbineNumber != null ? `ВЭУ №${request.snapshot.turbineNumber}` : request.telemetryTurbineId }}</dd></div>
-          <div><dt class="text-sm text-gray-600">Приоритет</dt><dd>{{ priorityLabels[request.priority] || request.priority }}</dd></div>
-          <div><dt class="text-sm text-gray-600">Плановый срок</dt><dd :class="request.isOverdue ? 'text-red-500' : 'text-gray-900'">{{ formatDate(request.currentDeadline) }}<span v-if="request.isOverdue"> (просрочена)</span></dd></div>
+          <div><dt class="text-sm text-gray-600">Приоритет</dt><dd><UBadge :color="priorityColors[request.priority] || 'neutral'" variant="soft">{{ priorityLabels[request.priority] || request.priority }}</UBadge></dd></div>
+          <div><dt class="text-sm text-gray-600">Плановый срок</dt><dd :class="request.isOverdue ? 'font-medium text-error' : 'text-gray-900'">{{ formatDate(request.currentDeadline) }}<span v-if="request.isOverdue"> (просрочена)</span></dd></div>
           <div><dt class="text-sm text-gray-600">Исполнитель</dt><dd>{{ request.assigneeId ? person(request.assigneeId) : 'Не назначен' }}</dd></div>
           <div><dt class="text-sm text-gray-600">Автор</dt><dd>{{ request.authorId ? person(request.authorId) : 'Система' }}</dd></div>
           <div><dt class="text-sm text-gray-600">Создана</dt><dd>{{ formatDate(request.createdAt) }}</dd></div>
@@ -159,11 +163,11 @@ async function convert() {
           <UFormField label="Комментарий к действию"><UTextarea v-model="workComment" maxlength="2000" placeholder="Диагностика, выполненные работы или причина перевода в ремонт" :rows="3" class="w-full" /><p class="mt-1 text-sm text-gray-600">Комментарий сохраняется при смене статуса или переводе в ремонт.</p></UFormField>
           <UFormField v-if="request.status === 'IN_PROGRESS'" label="Комментарий завершения" required><UTextarea v-model="closingComment" maxlength="2000" placeholder="Опишите результат перед закрытием" :rows="3" class="w-full" /></UFormField>
           <div class="flex flex-wrap gap-2">
-            <UButton v-if="request.status === 'NEW'" :disabled="busy" @click="transition('IN_PROGRESS')">Взять в работу</UButton>
-            <UButton v-if="request.status === 'IN_PROGRESS'" variant="outline" :disabled="busy" @click="transition('WAITING_PARTS')">Ожидание ЗИП</UButton>
-            <UButton v-if="request.status === 'WAITING_PARTS'" variant="outline" :disabled="busy" @click="transition('IN_PROGRESS')">Вернуть в работу</UButton>
-            <UButton v-if="request.type === 'INSPECTION'" variant="outline" :disabled="busy" @click="convert">Перевести в ремонт</UButton>
-            <UButton v-if="request.status === 'IN_PROGRESS'" :disabled="busy" @click="transition('COMPLETED')">Завершить с комментарием</UButton>
+            <UButton v-if="request.status === 'NEW'" color="primary" :disabled="busy" @click="transition('IN_PROGRESS')">Взять в работу</UButton>
+            <UButton v-if="request.status === 'IN_PROGRESS'" color="warning" :disabled="busy" @click="transition('WAITING_PARTS')">Ожидание ЗИП</UButton>
+            <UButton v-if="request.status === 'WAITING_PARTS'" color="primary" :disabled="busy" @click="transition('IN_PROGRESS')">Вернуть в работу</UButton>
+            <UButton v-if="request.type === 'INSPECTION'" color="error" variant="soft" :disabled="busy" @click="convert">Перевести в ремонт</UButton>
+            <UButton v-if="request.status === 'IN_PROGRESS'" color="success" :disabled="busy" @click="transition('COMPLETED')">Завершить с комментарием</UButton>
           </div>
         </div>
       </UCard>
@@ -174,7 +178,7 @@ async function convert() {
           <div v-if="userStore.role === 'director'" class="grid gap-4 sm:grid-cols-2"><UFormField label="Приоритет"><USelect v-model="priorityDraft" :items="priorityOptions" value-key="value" class="w-full" /></UFormField><UFormField label="Плановый срок"><UInput v-model="dueDraft" type="datetime-local" class="w-full" /></UFormField></div>
           <UFormField v-if="userStore.role === 'dispatcher' && request.source === 'AUTO'" label="Плановый срок"><UInput v-model="dueDraft" type="datetime-local" class="w-full" /></UFormField>
           <UFormField label="Комментарий к изменению"><UTextarea v-model="managementComment" maxlength="1000" :rows="2" class="w-full" /></UFormField>
-          <div class="flex flex-wrap gap-2"><UButton :disabled="busy || !engineers.length" @click="assign">Назначить исполнителя</UButton><UButton v-if="userStore.role === 'director'" variant="outline" :disabled="busy" @click="schedule">Сохранить срок и приоритет</UButton><UButton v-if="userStore.role === 'dispatcher' && request.source === 'AUTO'" variant="outline" :disabled="busy" @click="setAutoDeadline">Сохранить срок</UButton></div>
+          <div class="flex flex-wrap gap-2"><UButton color="primary" :disabled="busy || !engineers.length" @click="assign">Назначить исполнителя</UButton><UButton v-if="userStore.role === 'director'" color="success" variant="soft" :disabled="busy" @click="schedule">Сохранить срок и приоритет</UButton><UButton v-if="userStore.role === 'dispatcher' && request.source === 'AUTO'" color="success" variant="soft" :disabled="busy" @click="setAutoDeadline">Сохранить срок</UButton></div>
         </div>
       </UCard>
       <UCard class="bg-white ring-1 ring-brand/15">

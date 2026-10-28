@@ -2,6 +2,7 @@
 import { useUserStore } from '~/stores/user'
 import { apiProblem } from '~/utils/apiProblem'
 import StatCards from '~/components/home/StatCards.vue'
+import { statusColors } from '~/components/requests/requestUtils'
 
 const userStore = useUserStore()
 const requests = ref([])
@@ -17,18 +18,17 @@ const active = computed(() => relevant.value.filter(item => item.status !== 'COM
 const overdue = computed(() => active.value.filter(item => item.isOverdue))
 const unassigned = computed(() => active.value.filter(item => !item.assigneeId))
 const stats = computed(() => [
-  { label: 'Активные заявки', value: active.value.length },
-  { label: 'Просроченные', value: overdue.value.length },
-  { label: 'Завершённые', value: relevant.value.filter(item => item.status === 'COMPLETED').length },
+  { label: 'Активные заявки', value: active.value.length, color: 'warning' },
+  { label: 'Просроченные', value: overdue.value.length, color: 'error' },
+  { label: 'Завершённые', value: relevant.value.filter(item => item.status === 'COMPLETED').length, color: 'success' },
   ...(userStore.role === 'engineer' ? [] : [{ label: 'Без исполнителя', value: unassigned.value.length }]),
 ])
 const statusLabels = { NEW: 'Новая', IN_PROGRESS: 'В работе', WAITING_PARTS: 'Ожидание запчастей', COMPLETED: 'Завершена' }
-const statusColors = { NEW: '#2563eb', IN_PROGRESS: '#7c3aed', WAITING_PARTS: '#d97706', COMPLETED: '#16a34a' }
 const statusMetrics = computed(() => Object.entries(statusLabels).map(([status, label]) => ({
   status,
   label,
   count: relevant.value.filter(item => item.status === status).length,
-  color: statusColors[status],
+  color: `var(--color-${statusColors[status]})`,
 })))
 const chartData = computed(() => statusMetrics.value.filter(item => item.count > 0))
 const workloadRows = computed(() => engineers.value
@@ -72,12 +72,12 @@ onMounted(load)
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-2xl font-semibold text-gray-900">{{ roleTitle }}</h1>
       <div class="flex flex-wrap gap-2">
-        <UButton v-if="userStore.role === 'dispatcher'" to="/requests/new">Создать заявку</UButton>
-        <UButton to="/requests" variant="outline">Все заявки</UButton>
+        <UButton v-if="userStore.role === 'dispatcher'" color="primary" to="/requests/new">Создать заявку</UButton>
+        <UButton color="primary" variant="soft" to="/requests">Все заявки</UButton>
       </div>
     </div>
     <p v-if="loading" role="status" class="text-sm text-gray-600">Загрузка сводки…</p>
-    <div v-else-if="error" role="alert" class="space-y-2 text-sm text-red-700"><p>{{ error }}</p><UButton variant="outline" @click="load">Повторить</UButton></div>
+    <div v-else-if="error" role="alert" class="space-y-2 text-sm text-red-700"><p>{{ error }}</p><UButton color="warning" @click="load">Повторить</UButton></div>
     <template v-else>
       <StatCards :stats="stats" />
       <UCard v-if="userStore.role === 'director'" class="bg-white ring-1 ring-brand/15">
@@ -110,9 +110,14 @@ onMounted(load)
         <p v-if="!active.length" class="text-sm text-gray-600">Активных заявок нет.</p>
         <UTable v-else :data="active" :columns="columns">
           <template #ticketNumber-cell="{ row }">№{{ row.original.ticketNumber }}</template>
-          <template #status-cell="{ row }">{{ statusLabels[row.original.status] || 'Неизвестно' }}<span v-if="row.original.isOverdue" class="ml-2 text-red-700">Просрочена</span></template>
-          <template #currentDeadline-cell="{ row }">{{ row.original.currentDeadline ? new Date(row.original.currentDeadline).toLocaleString('ru-RU') : 'Неизвестно' }}</template>
-          <template #actions-cell="{ row }"><UButton :to="`/requests/${row.original.id}`" variant="outline">Открыть</UButton></template>
+          <template #status-cell="{ row }">
+            <span class="inline-flex flex-wrap items-center justify-center gap-2">
+              <UBadge :color="statusColors[row.original.status] || 'neutral'" variant="soft">{{ statusLabels[row.original.status] || 'Неизвестно' }}</UBadge>
+              <UBadge v-if="row.original.isOverdue" color="error" variant="soft">Просрочена</UBadge>
+            </span>
+          </template>
+          <template #currentDeadline-cell="{ row }"><span :class="row.original.isOverdue ? 'font-medium text-error' : 'text-gray-900'">{{ row.original.currentDeadline ? new Date(row.original.currentDeadline).toLocaleString('ru-RU') : 'Неизвестно' }}</span></template>
+          <template #actions-cell="{ row }"><UButton color="primary" variant="soft" :to="`/requests/${row.original.id}`">Открыть</UButton></template>
         </UTable>
       </UCard>
       <UCard class="bg-white ring-1 ring-brand/15">

@@ -4,9 +4,12 @@
 @theme static {
   --color-brand: #2563eb;
   --color-brand-hover: #1d4ed8;
-  --color-light-green: #86efac;
   --color-yellow: #facc15;
   --color-red: #ef4444;
+  --color-green: #16a34a;
+  --color-yellow-500: var(--color-yellow);
+  --color-red-500: var(--color-red);
+  --color-green-500: var(--color-green);
 }
 
 :root {
