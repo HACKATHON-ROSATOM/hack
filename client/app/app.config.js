@@ -3,6 +3,9 @@ export default defineAppConfig({
     colors: {
       primary: 'blue',
       neutral: 'gray',
+      warning: 'yellow',
+      error: 'red',
+      success: 'green',
     },
     button: {
       defaultVariants: { size: 'xl' },

@@ -58,7 +58,7 @@ const filteredRequests = computed(() => requests.value.map((request) => {
   <main class="mx-auto max-w-6xl space-y-6 px-4 py-10">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-2xl font-semibold text-gray-900">Заявки</h1>
-      <UButton v-if="userStore.role === 'dispatcher'" to="/requests/new">Создать заявку</UButton>
+      <UButton v-if="userStore.role === 'dispatcher'" color="primary" to="/requests/new">Создать заявку</UButton>
     </div>
     <UCard class="bg-white ring-1 ring-brand/15">
       <div class="flex flex-wrap gap-3">
@@ -69,7 +69,7 @@ const filteredRequests = computed(() => requests.value.map((request) => {
     </UCard>
     <UCard class="bg-white ring-1 ring-brand/15">
       <p v-if="loading" role="status">Загрузка заявок…</p>
-      <div v-else-if="error" role="alert" class="space-y-3 text-red-700"><p>{{ error }}</p><UButton variant="outline" @click="load">Повторить</UButton></div>
+      <div v-else-if="error" role="alert" class="space-y-3 text-red-700"><p>{{ error }}</p><UButton color="warning" @click="load">Повторить</UButton></div>
       <template v-else>
         <h2 class="mb-4 text-lg font-semibold text-gray-900">Все заявки</h2>
         <p v-if="!filteredRequests.length" class="text-gray-600">Заявки не найдены.</p>

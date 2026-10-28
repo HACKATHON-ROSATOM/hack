@@ -51,13 +51,13 @@ onMounted(load)
       <UInput v-model="search" icon="i-lucide-search" placeholder="Поиск по названию, ID или расположению" class="mb-4 w-72 max-w-full" />
       <p v-if="loading" role="status" class="text-sm text-gray-600">Загрузка оборудования…</p>
       <div v-else-if="error" role="alert" class="space-y-2 text-sm text-red-700">
-        <p>{{ error }}</p><UButton variant="outline" @click="load">Повторить</UButton>
+        <p>{{ error }}</p><UButton color="warning" @click="load">Повторить</UButton>
       </div>
       <p v-else-if="!visibleEquipment.length" class="text-sm text-gray-600">{{ equipment.length ? 'Ничего не найдено.' : 'Оборудование отсутствует.' }}</p>
       <UTable v-else :data="visibleEquipment" :columns="columns">
         <template #externalId-cell="{ row }">{{ row.original.externalId || 'Неизвестно' }}</template>
         <template #location-cell="{ row }">{{ row.original.location || 'Неизвестно' }}</template>
-        <template #actions-cell="{ row }"><UButton :to="'/equipment/' + row.original.id" variant="outline">Открыть</UButton></template>
+        <template #actions-cell="{ row }"><UButton color="primary" variant="soft" :to="'/equipment/' + row.original.id">Открыть</UButton></template>
       </UTable>
     </UCard>
   </main>
