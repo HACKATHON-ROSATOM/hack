@@ -1,5 +1,9 @@
+import { readFile } from "node:fs/promises";
 import { createDatabase } from "../src/database.ts";
-import { readEquipmentWorkbook } from "../src/modules/equipment/workbook.ts";
+import {
+  readEquipmentWorkbook,
+  type EquipmentWorkbook,
+} from "../src/modules/equipment/workbook.ts";
 import type { EquipmentType, Prisma } from "../src/generated/prisma/client.ts";
 
 try {
@@ -7,10 +11,32 @@ try {
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
-const path = process.argv[2];
-if (!path) throw new Error("Укажите путь к книге XLSX");
+const argument = process.argv[2];
+const initial = argument === "--initial";
+if (!argument || process.argv.length !== 3) {
+  throw new Error("Укажите путь к книге XLSX или флаг --initial");
+}
 if (!process.env.DATABASE_URL) throw new Error("Не задан DATABASE_URL");
-const workbook = await readEquipmentWorkbook(path);
+let workbook: EquipmentWorkbook;
+if (initial) {
+  workbook = JSON.parse(
+    await readFile(new URL("../equipment-data.json", import.meta.url), "utf8"),
+  ) as EquipmentWorkbook;
+  for (const item of workbook.equipment) {
+    for (const index of [10, 11]) {
+      const value = item.row[index];
+      if (typeof value === "string") item.row[index] = new Date(value);
+    }
+  }
+  for (const item of workbook.history) {
+    for (const index of [4, 10, 11, 15]) {
+      const value = item.row[index];
+      if (typeof value === "string") item.row[index] = new Date(value);
+    }
+  }
+} else {
+  workbook = await readEquipmentWorkbook(argument);
+}
 const db = createDatabase(process.env.DATABASE_URL);
 const types: Record<string, EquipmentType> = {
   Генератор: "GENERATOR",
@@ -38,6 +64,26 @@ function number(value: unknown): number | null {
 try {
   await db.$transaction(
     async (tx) => {
+      if (initial) {
+        const equipmentCount = await tx.equipment.count({
+          where: { externalIdKey: { in: workbook.equipment.map((item) => item.externalIdKey) } },
+        });
+        const historyCount = await tx.maintenanceRecord.count({
+          where: { importRowId: { in: workbook.history.map((item) => item.importRowId) } },
+        });
+        if (
+          equipmentCount === workbook.equipment.length &&
+          historyCount === workbook.history.length
+        ) {
+          console.log("Начальные данные уже загружены; существующие данные не изменены.");
+          return;
+        }
+        if (equipmentCount !== 0 || historyCount !== 0) {
+          throw new Error(
+            `Начальные данные загружены частично (оборудование: ${equipmentCount}/${workbook.equipment.length}, история: ${historyCount}/${workbook.history.length}); автоматический импорт остановлен`,
+          );
+        }
+      }
       const equipmentIds = new Map<string, string>();
       for (const item of workbook.equipment) {
         const r = item.row;
@@ -112,7 +158,7 @@ try {
         });
       }
     },
-    { timeout: 120_000 },
+    { timeout: 120_000, ...(initial ? { isolationLevel: "Serializable" as const } : {}) },
   );
   console.log(JSON.stringify(workbook.report, null, 2));
 } finally {

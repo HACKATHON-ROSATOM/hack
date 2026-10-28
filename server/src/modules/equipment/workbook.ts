@@ -4,6 +4,25 @@ import readExcelFile from "read-excel-file/node";
 type Cell = string | number | boolean | Date | null;
 type Row = Cell[];
 
+export interface EquipmentWorkbook {
+  equipment: {
+    externalId: Cell;
+    externalIdType: string;
+    externalIdKey: string;
+    row: Row;
+    hierarchy: (Cell | null)[];
+  }[];
+  history: {
+    importRowId: string;
+    externalEquipmentId: string;
+    matched: boolean;
+    sourceSheet: string;
+    sourceRow: number;
+    row: Row;
+  }[];
+  report: { equipment: number; history: number; matched: number; unmatched: number };
+}
+
 const equipmentHeaders = [
   "Идентификатор для загрузки",
   "Уровень 0",
@@ -67,7 +86,7 @@ function canonical(row: Row): string {
   );
 }
 
-export async function readEquipmentWorkbook(path: string) {
+export async function readEquipmentWorkbook(path: string): Promise<EquipmentWorkbook> {
   const sheets = await readExcelFile(path, { trim: false });
   const equipmentSheet = sheets.find((sheet) => sheet.sheet === "Объекты ремонта");
   const historySheet = sheets.find((sheet) => sheet.sheet === "Ввод начальных данных");
@@ -77,13 +96,7 @@ export async function readEquipmentWorkbook(path: string) {
   requireHeaders(equipmentRows, equipmentHeaders);
   requireHeaders(historyRows, historyHeaders);
   const ids = new Set<string>();
-  const equipment: {
-    externalId: Cell;
-    externalIdType: string;
-    externalIdKey: string;
-    row: Row;
-    hierarchy: (Cell | null)[];
-  }[] = [];
+  const equipment: EquipmentWorkbook["equipment"] = [];
   const hierarchy: (Cell | null)[] = Array(7).fill(null);
   for (const row of equipmentRows.slice(1)) {
     for (let level = 0; level < 7; level++) {

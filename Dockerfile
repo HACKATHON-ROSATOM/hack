@@ -23,6 +23,24 @@ RUN pnpm --filter express-app db:generate
 EXPOSE 3000
 CMD ["pnpm", "--filter", "express-app", "dev"]
 
+FROM base AS frontend-dependencies
+COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY --chown=node:node server/package.json ./server/
+COPY --chown=node:node client/package.json ./client/
+RUN pnpm --filter client... install --frozen-lockfile
+
+FROM frontend-dependencies AS frontend-build
+COPY --chown=node:node . .
+RUN pnpm --filter client build
+
+FROM node:24-bookworm-slim AS frontend
+ENV NODE_ENV=production NITRO_HOST=0.0.0.0 NITRO_PORT=3002
+WORKDIR /app
+COPY --chown=node:node --from=frontend-build /app/client/.output ./.output
+USER node
+EXPOSE 3002
+CMD ["node", ".output/server/index.mjs"]
+
 FROM development AS build
 RUN pnpm --filter express-app build
 
