@@ -5,6 +5,7 @@ import express from "express";
 import { describe, expect, it, type TestContext } from "vitest";
 import { z } from "zod";
 
+import type { Database } from "../src/database.ts";
 import { ApiError, apiErrorHandler } from "../src/http/problem.ts";
 import type { AuthService } from "../src/modules/auth/service.ts";
 import { RequestsRepository } from "../src/modules/requests/repository.ts";
@@ -46,6 +47,11 @@ const DEMO_USERS = {
     name: "Сервисный инженер",
     role: "ENGINEER" as const,
   },
+  engineer2: {
+    id: "27f570cb-e70b-418b-b7d0-409e5ee19698",
+    name: "Второй инженер",
+    role: "ENGINEER" as const,
+  },
   director: {
     id: "5dbb285c-7deb-4a2a-a961-c24a6860afdc",
     name: "Директор",
@@ -56,6 +62,7 @@ const DEMO_USERS = {
 const tokens = {
   duty: "duty-session-token-valid-sample-12345678",
   engineer: "engineer-session-token-valid-sample-1234",
+  engineer2: "engineer2-session-token-valid-sample-123",
   director: "director-session-token-valid-sample-1234",
 };
 
@@ -70,6 +77,7 @@ const mockAuth: AuthService = {
     const token = match[1];
     if (token === tokens.duty) return DEMO_USERS.duty;
     if (token === tokens.engineer) return DEMO_USERS.engineer;
+    if (token === tokens.engineer2) return DEMO_USERS.engineer2;
     if (token === tokens.director) return DEMO_USERS.director;
     return null;
   },
@@ -85,6 +93,11 @@ const engineerHeaders = {
   authorization: `Bearer ${tokens.engineer}`,
 };
 
+const engineer2Headers = {
+  "content-type": "application/json",
+  authorization: `Bearer ${tokens.engineer2}`,
+};
+
 const directorHeaders = {
   "content-type": "application/json",
   authorization: `Bearer ${tokens.director}`,
@@ -92,8 +105,24 @@ const directorHeaders = {
 
 async function serveRequests(t: TestContext) {
   const repo = new RequestsRepository();
-  const service = new RequestsService(repo, undefined, mockAuth);
-  const requestsModule = createRequestsModule(undefined, mockAuth, service);
+  const mockDb = {
+    equipment: {
+      async findUnique({ where: { id } }: { where: { id: string } }) {
+        return { id, name: "Тестовое оборудование" };
+      },
+    },
+    user: {
+      async findUnique({ where: { id } }: { where: { id: string } }) {
+        const found = Object.values(DEMO_USERS).find((u) => u.id === id);
+        if (found) {
+          return { id: found.id, role: found.role, fullName: found.name, login: found.id };
+        }
+        return null;
+      },
+    },
+  } as unknown as Database;
+  const service = new RequestsService(repo, mockDb, mockAuth);
+  const requestsModule = createRequestsModule(mockDb, mockAuth, service);
 
   const app = express();
   app.use("/api", express.json({ limit: "16kb" }));
@@ -340,6 +369,84 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
     });
     expect(response.status).toBe(201);
   });
+
+  it("rejects ticket creation with non-existent assigneeId with 400", async (t) => {
+    const { base } = await serveRequests(t);
+    const response = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "Назначение несуществующего пользователя",
+        initialDeadline: new Date().toISOString(),
+        assigneeId: randomUUID(),
+      }),
+    });
+    await expectProblem(response, 400, "/api/requests");
+  });
+
+  it("rejects ticket creation with DIRECTOR or DUTY role assigneeId with 400", async (t) => {
+    const { base } = await serveRequests(t);
+    const directorAssigneeRes = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "Назначение директора исполнителем",
+        initialDeadline: new Date().toISOString(),
+        assigneeId: DEMO_USERS.director.id,
+      }),
+    });
+    await expectProblem(directorAssigneeRes, 400, "/api/requests");
+
+    const dutyAssigneeRes = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "Назначение дежурного исполнителем",
+        initialDeadline: new Date().toISOString(),
+        assigneeId: DEMO_USERS.duty.id,
+      }),
+    });
+    await expectProblem(dutyAssigneeRes, 400, "/api/requests");
+  });
+
+  it("rejects reassignment with non-existent user or non-engineer with 400", async (t) => {
+    const { base } = await serveRequests(t);
+    const createRes = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "Тест валидации переназначения",
+        initialDeadline: new Date().toISOString(),
+      }),
+    });
+    const ticket = ticketResponseSchema.parse(await createRes.json());
+
+    const notFoundAssignRes = await fetch(`${base}/api/requests/${ticket.id}/assignment`, {
+      method: "PATCH",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        assigneeId: randomUUID(),
+      }),
+    });
+    await expectProblem(notFoundAssignRes, 400, `/api/requests/${ticket.id}/assignment`);
+
+    const directorAssignRes = await fetch(`${base}/api/requests/${ticket.id}/assignment`, {
+      method: "PATCH",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        assigneeId: DEMO_USERS.director.id,
+      }),
+    });
+    await expectProblem(directorAssignRes, 400, `/api/requests/${ticket.id}/assignment`);
+  });
 });
 
 describe("Requests Module - End-to-End Workflow & State Machine", () => {
@@ -374,6 +481,16 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const ticketId = createdTicket.id;
 
+    const unassignedStartRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({
+        toStatus: "IN_PROGRESS",
+        comment: "Попытка начать без назначенного исполнителя",
+      }),
+    });
+    await expectProblem(unassignedStartRes, 400, `/api/requests/${ticketId}/transitions`);
+
     const readRes = await fetch(`${base}/api/requests/${ticketId}`, { headers: dutyHeaders });
     expect(readRes.status).toBe(200);
     const rawRead: unknown = await readRes.json();
@@ -395,6 +512,16 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(assignRes.status).toBe(200);
     const assignedTicket = ticketDetailResponseSchema.parse(await assignRes.json());
     expect(assignedTicket.assigneeId).toBe(engineerId);
+
+    const otherEngineerStartRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
+      method: "POST",
+      headers: engineer2Headers,
+      body: JSON.stringify({
+        toStatus: "IN_PROGRESS",
+        comment: "Попытка другого инженера начать работу",
+      }),
+    });
+    await expectProblem(otherEngineerStartRes, 403, `/api/requests/${ticketId}/transitions`);
 
     const prematureCloseRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
@@ -422,6 +549,16 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
       (l) => l.action === "STATUS_CHANGED" && l.newValue === "IN_PROGRESS",
     );
     expect(startLog).toBeDefined();
+
+    const otherEngineerWaitRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
+      method: "POST",
+      headers: engineer2Headers,
+      body: JSON.stringify({
+        toStatus: "WAITING_PARTS",
+        comment: "Попытка другого инженера",
+      }),
+    });
+    await expectProblem(otherEngineerWaitRes, 403, `/api/requests/${ticketId}/transitions`);
 
     const waitRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
@@ -534,6 +671,31 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const ticket = ticketResponseSchema.parse(await createRes.json());
     expect(ticket.type).toBe("INSPECTION");
 
+    const unassignedConvert = await fetch(`${base}/api/requests/${ticket.id}/convert-to-repair`, {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({ comment: "Попытка перевода без назначенного исполнителя" }),
+    });
+    await expectProblem(unassignedConvert, 400, `/api/requests/${ticket.id}/convert-to-repair`);
+
+    await fetch(`${base}/api/requests/${ticket.id}/assignment`, {
+      method: "PATCH",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        assigneeId: DEMO_USERS.engineer.id,
+      }),
+    });
+
+    const otherEngineerConvert = await fetch(
+      `${base}/api/requests/${ticket.id}/convert-to-repair`,
+      {
+        method: "POST",
+        headers: engineer2Headers,
+        body: JSON.stringify({ comment: "Попытка другого инженера" }),
+      },
+    );
+    await expectProblem(otherEngineerConvert, 403, `/api/requests/${ticket.id}/convert-to-repair`);
+
     const convertReason = "Обнаружен критический износ тормозных колодок, требуется замена";
     const convertRes = await fetch(`${base}/api/requests/${ticket.id}/convert-to-repair`, {
       method: "POST",
@@ -557,6 +719,85 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
       body: JSON.stringify({ comment: "Повторная попытка" }),
     });
     await expectProblem(invalidConvert, 400, `/api/requests/${ticket.id}/convert-to-repair`);
+  });
+
+  it("executes a dedicated REPAIR ticket lifecycle: work -> waiting parts -> resume -> complete with result", async (t) => {
+    const { base } = await serveRequests(t);
+    const equipmentId = randomUUID();
+
+    const createRes = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "REPAIR",
+        equipmentId,
+        description: "Плановый ремонт генератора",
+        priority: "HIGH",
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
+        assigneeId: DEMO_USERS.engineer.id,
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const ticket = ticketResponseSchema.parse(await createRes.json());
+    expect(ticket.type).toBe("REPAIR");
+    expect(ticket.status).toBe("NEW");
+    expect(ticket.assigneeId).toBe(DEMO_USERS.engineer.id);
+
+    const startRes = await fetch(`${base}/api/requests/${ticket.id}/transitions`, {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({
+        toStatus: "IN_PROGRESS",
+        comment: "Начало разборки узла генератора",
+      }),
+    });
+    expect(startRes.status).toBe(200);
+    const started = ticketDetailResponseSchema.parse(await startRes.json());
+    expect(started.status).toBe("IN_PROGRESS");
+
+    const waitPartsRes = await fetch(`${base}/api/requests/${ticket.id}/transitions`, {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({
+        toStatus: "WAITING_PARTS",
+        comment: "Ожидание поставки обмотки статора",
+      }),
+    });
+    expect(waitPartsRes.status).toBe(200);
+    const waiting = ticketDetailResponseSchema.parse(await waitPartsRes.json());
+    expect(waiting.status).toBe("WAITING_PARTS");
+
+    const resumeRes = await fetch(`${base}/api/requests/${ticket.id}/transitions`, {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({
+        toStatus: "IN_PROGRESS",
+        comment: "Обмотка поступила, продолжение ремонта",
+      }),
+    });
+    expect(resumeRes.status).toBe(200);
+    const resumed = ticketDetailResponseSchema.parse(await resumeRes.json());
+    expect(resumed.status).toBe("IN_PROGRESS");
+
+    const completeComment = "Замена обмотки завершена, сопротивление изоляции соответствует норме.";
+    const completeRes = await fetch(`${base}/api/requests/${ticket.id}/transitions`, {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({
+        toStatus: "COMPLETED",
+        comment: completeComment,
+      }),
+    });
+    expect(completeRes.status).toBe(200);
+    const completed = ticketDetailResponseSchema.parse(await completeRes.json());
+    expect(completed.status).toBe("COMPLETED");
+    expect(completed.completionComment).toBe(completeComment);
+    expect(completed.completedAt).toBeDefined();
+
+    const actions = completed.auditLogs.map((l) => l.action);
+    expect(actions).toContain("CREATED");
+    expect(actions).toContain("ASSIGNED");
+    expect(actions).toContain("STATUS_CHANGED");
   });
 
   it("supports updating schedule deadline and priority with dual audit logging", async (t) => {
@@ -608,7 +849,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
   it("provides analytics for overdue tickets and engineer workload", async (t) => {
     const { base } = await serveRequests(t);
     const engineerA = DEMO_USERS.engineer.id;
-    const engineerB = randomUUID();
+    const engineerB = DEMO_USERS.engineer2.id;
 
     const yesterday = new Date(Date.now() - 86400000).toISOString();
     const overdueRes = await fetch(`${base}/api/requests`, {
@@ -654,6 +895,9 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(overdueListRes.status).toBe(200);
     const overdueList = ticketListResponseSchema.parse(await overdueListRes.json());
     expect(overdueList.items.some((t) => t.id === overdueTicket.id)).toBe(true);
+    const foundOverdue = overdueList.items.find((t) => t.id === overdueTicket.id);
+    expect(foundOverdue?.isOverdue).toBe(true);
+    expect(foundOverdue?.assigneeId).toBe(engineerA);
 
     const workloadRes = await fetch(`${base}/api/requests/analytics/workload`, {
       headers: dutyHeaders,
