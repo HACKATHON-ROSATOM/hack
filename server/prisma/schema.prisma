@@ -194,6 +194,9 @@ model TelemetryObservation {
   ioa        Int
   value      Float
   receivedAt DateTime @db.Timestamptz
+  alarmBaseline Boolean?
+  alarmFresh Boolean?
+  alarmProcessed Boolean @default(true)
 
   @@index([ioa, receivedAt, id])
 }

@@ -28,8 +28,8 @@ export function createApp(
 ) {
   const app = express();
   const requests = new RequestsService(new RequestsRepository(db), db, auth, monitoring);
-  monitoring.subscribeStatus(async (event) => {
-    await requests.processTelemetry(event);
+  monitoring.subscribeStatus(async (event, observationId) => {
+    await requests.processTelemetry(event, observationId);
   });
   const apiModules = [
     createNotesModule(db),

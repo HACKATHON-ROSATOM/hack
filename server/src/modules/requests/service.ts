@@ -92,8 +92,11 @@ export class RequestsService {
     }
   }
 
-  processTelemetry(snapshot: StatusEvent): Promise<TicketWithDetails | null> {
-    return this.repo.processTelemetry(snapshot);
+  processTelemetry(
+    snapshot: StatusEvent,
+    observationId?: number,
+  ): Promise<TicketWithDetails | null> {
+    return this.repo.processTelemetry(snapshot, observationId);
   }
 
   async attachSnapshot(

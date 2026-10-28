@@ -40,7 +40,10 @@ export interface AuditEntryData {
 }
 
 export interface IRequestsRepository {
-  processTelemetry(snapshot: StatusEvent): Promise<TicketWithDetails | null>;
+  processTelemetry(
+    snapshot: StatusEvent,
+    observationId?: number,
+  ): Promise<TicketWithDetails | null>;
   attachSnapshot(
     ticketId: string,
     snapshot: TelemetrySnapshot,
@@ -80,7 +83,10 @@ export class RequestsRepository implements IRequestsRepository {
     this.db = db;
   }
 
-  async processTelemetry(snapshot: StatusEvent): Promise<TicketWithDetails | null> {
+  async processTelemetry(
+    snapshot: StatusEvent,
+    observationId?: number,
+  ): Promise<TicketWithDetails | null> {
     const statuses: Record<number, TelemetrySnapshot["status"]> = {
       1: "STOPPED",
       3: "READY",
@@ -99,49 +105,73 @@ export class RequestsRepository implements IRequestsRepository {
 
     if (this.db) {
       return this.db.$transaction(async (tx) => {
-        const value = known ? event.value : null;
-        const inserted = await tx.$queryRaw<Array<{ turbineId: string }>>`
-          INSERT INTO "AlarmTelemetryState" ("turbineId", "value", "receivedAt", "baselineReady")
-          VALUES (${event.turbineId}, ${value}, ${receivedAt}, ${known})
-          ON CONFLICT ("turbineId") DO NOTHING RETURNING "turbineId"
-        `;
-        if (inserted.length) return null;
-        const [state] = await tx.$queryRaw<
-          Array<{ value: number | null; receivedAt: Date; baselineReady: boolean }>
-        >`
-          SELECT "value", "receivedAt", "baselineReady" FROM "AlarmTelemetryState"
-          WHERE "turbineId" = ${event.turbineId} FOR UPDATE
-        `;
-        if (!state || receivedAt.getTime() < state.receivedAt.getTime()) return null;
-        if (!known) {
+        if (observationId !== undefined) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(811048192)`;
+          const [pending] = await tx.$queryRaw<Array<{ id: number }>>`
+            SELECT "id" FROM "TelemetryObservation"
+            WHERE "alarmProcessed" = false ORDER BY "id" LIMIT 1 FOR UPDATE
+          `;
+          if (!pending || pending.id > observationId) return null;
+          if (pending.id !== observationId)
+            throw new Error("Earlier alarm observation is pending.");
+        }
+        const process = async (): Promise<TicketWithDetails | null> => {
+          const value = known ? event.value : null;
+          const inserted = await tx.$queryRaw<Array<{ turbineId: string }>>`
+            INSERT INTO "AlarmTelemetryState" ("turbineId", "value", "receivedAt", "baselineReady")
+            VALUES (${event.turbineId}, ${value}, ${receivedAt}, ${known})
+            ON CONFLICT ("turbineId") DO NOTHING RETURNING "turbineId"
+          `;
+          if (inserted.length) return null;
+          const [state] = await tx.$queryRaw<
+            Array<{ value: number | null; receivedAt: Date; baselineReady: boolean }>
+          >`
+            SELECT "value", "receivedAt", "baselineReady" FROM "AlarmTelemetryState"
+            WHERE "turbineId" = ${event.turbineId} FOR UPDATE
+          `;
+          if (
+            !state ||
+            (observationId === undefined && receivedAt.getTime() < state.receivedAt.getTime())
+          )
+            return null;
+          if (!known) {
+            await tx.$executeRaw`
+              UPDATE "AlarmTelemetryState" SET "receivedAt" = ${receivedAt}, "baselineReady" = false
+              WHERE "turbineId" = ${event.turbineId}
+            `;
+            return null;
+          }
           await tx.$executeRaw`
-            UPDATE "AlarmTelemetryState" SET "receivedAt" = ${receivedAt}, "baselineReady" = false
+            UPDATE "AlarmTelemetryState" SET "value" = ${event.value}, "receivedAt" = ${receivedAt}, "baselineReady" = true
             WHERE "turbineId" = ${event.turbineId}
           `;
-          return null;
-        }
-        await tx.$executeRaw`
-          UPDATE "AlarmTelemetryState" SET "value" = ${event.value}, "receivedAt" = ${receivedAt}, "baselineReady" = true
-          WHERE "turbineId" = ${event.turbineId}
-        `;
-        if (baseline || !state.baselineReady || event.value !== 8 || state.value === 8) return null;
-        const ticket = await tx.ticket.create({
-          data: {
-            type: "INSPECTION",
-            source: "AUTO",
-            telemetryTurbineId: event.turbineId,
-            snapshot: { ...event },
-            description,
-            auditLogs: {
-              create: {
-                action: "CREATED",
-                comment: "Заявка создана автоматически по аварийному сигналу.",
+          if (baseline || !state.baselineReady || event.value !== 8 || state.value === 8)
+            return null;
+          const ticket = await tx.ticket.create({
+            data: {
+              type: "INSPECTION",
+              source: "AUTO",
+              telemetryTurbineId: event.turbineId,
+              snapshot: { ...event },
+              description,
+              auditLogs: {
+                create: {
+                  action: "CREATED",
+                  comment: "Заявка создана автоматически по аварийному сигналу.",
+                },
               },
             },
-          },
-          include: { auditLogs: { orderBy: { createdAt: "asc" } } },
-        });
-        return this.mapPrismaTicket(ticket);
+            include: { auditLogs: { orderBy: { createdAt: "asc" } } },
+          });
+          return this.mapPrismaTicket(ticket);
+        };
+        const result = await process();
+        if (observationId !== undefined) {
+          await tx.$executeRaw`
+            UPDATE "TelemetryObservation" SET "alarmProcessed" = true WHERE "id" = ${observationId}
+          `;
+        }
+        return result;
       });
     }
 

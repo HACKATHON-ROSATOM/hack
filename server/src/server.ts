@@ -56,6 +56,7 @@ const iecClient =
       })
     : undefined;
 const app = createApp(db, auth, monitoring);
+monitoring.startProcessing();
 iecClient?.start();
 
 app.set("port", config.PORT);
@@ -101,10 +102,13 @@ function shutdown() {
   iecClient?.stop();
   shuttingDown = true;
   server.close(() => {
-    void db.$disconnect().catch(() => {
-      console.error("Database shutdown failed.");
-      process.exitCode = 1;
-    });
+    void monitoring
+      .stopProcessing()
+      .then(() => db.$disconnect())
+      .catch((error: unknown) => {
+        console.error("Database shutdown failed:", error);
+        process.exitCode = 1;
+      });
   });
 }
 
