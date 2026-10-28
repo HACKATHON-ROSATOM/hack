@@ -11,6 +11,7 @@ import { ApiError, apiErrorHandler } from "./http/problem.ts";
 import { createAuthModule } from "./modules/auth/router.ts";
 import { createAuthService, type AuthService } from "./modules/auth/service.ts";
 import { createEquipmentModule } from "./modules/equipment/router.ts";
+import { createEngineersModule } from "./modules/engineers/router.ts";
 import { createNotesModule } from "./modules/notes/router.ts";
 import { createRequestsModule } from "./modules/requests/router.ts";
 import indexRouter from "./routes/index.ts";
@@ -22,6 +23,7 @@ export function createApp(db: Database, auth: AuthService = createAuthService(db
     createNotesModule(db),
     createEquipmentModule(db),
     createAuthModule(auth),
+    createEngineersModule(db, auth),
     createRequestsModule(db, auth),
   ];
   const openApiDocument = JSON.stringify(generateOpenApi(apiModules));

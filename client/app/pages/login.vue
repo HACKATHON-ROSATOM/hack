@@ -1,7 +1,37 @@
 <script setup>
+import { useUserStore } from '~/stores/user'
+
 definePageMeta({ layout: "auth" });
 
-const rememberMe = ref(false);
+const userStore = useUserStore();
+const route = useRoute();
+const login = ref('');
+const password = ref('');
+const loading = ref(false);
+const ready = ref(false);
+onMounted(() => { ready.value = true; });
+const error = ref(route.query.session === 'expired'
+    ? 'Сессия завершилась. Войдите снова.'
+    : route.query.session === 'unavailable'
+        ? 'Не удалось проверить сессию. Проверьте соединение с сервером.'
+        : '');
+
+async function submit() {
+    if (loading.value) return;
+    loading.value = true;
+    error.value = '';
+    try {
+        await userStore.login(login.value, password.value);
+        password.value = '';
+        await navigateTo('/');
+    } catch (err) {
+        error.value = err?.statusCode === 401 || err?.response?.status === 401
+            ? 'Неверный логин или пароль.'
+            : 'Не удалось войти. Проверьте соединение и повторите попытку.';
+    } finally {
+        loading.value = false;
+    }
+}
 </script>
 
 <template>
@@ -16,9 +46,11 @@ const rememberMe = ref(false);
                     </h1>
                 </div>
 
-                <form class="space-y-4" @submit.prevent>
+                <form method="post" class="space-y-4" @submit.prevent="submit">
                     <UFormField label="Логин" required>
                         <UInput
+                            v-model="login"
+                            required
                             type="text"
                             name="username"
                             placeholder="Введите логин"
@@ -30,6 +62,8 @@ const rememberMe = ref(false);
 
                     <UFormField label="Пароль" required>
                         <UInput
+                            v-model="password"
+                            required
                             type="password"
                             name="password"
                             placeholder="Введите пароль"
@@ -39,17 +73,14 @@ const rememberMe = ref(false);
                         />
                     </UFormField>
 
-                    <UCheckbox
-                        v-model="rememberMe"
-                        name="remember"
-                        label="Запомнить меня"
-                        color="primary"
-                    />
+                    <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
                     <UButton
                         type="submit"
                         size="xl"
                         block
                         color="primary"
+                        :loading="loading"
+                        :disabled="loading || !ready"
                         class="justify-center"
                     >
                         Войти
