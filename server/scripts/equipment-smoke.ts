@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import express from "express";
+import { createApp } from "../src/app.ts";
 import { createDatabase } from "../src/database.ts";
-import { apiErrorHandler } from "../src/http/problem.ts";
-import { generateOpenApi } from "../src/http/openapi.ts";
-import { createEquipmentModule } from "../src/modules/equipment/router.ts";
 
 try {
   process.loadEnvFile();
@@ -13,10 +10,7 @@ try {
 }
 if (!process.env.DATABASE_URL) throw new Error("Не задан DATABASE_URL");
 const db = createDatabase(process.env.DATABASE_URL);
-const module = createEquipmentModule(db);
-const app = express();
-app.use(module.router);
-app.use(apiErrorHandler);
+const app = createApp(db);
 const server = app.listen(0, "127.0.0.1");
 try {
   await once(server, "listening");
@@ -42,7 +36,9 @@ try {
   const body = (await detail.json()) as { externalId: string; history: unknown[] };
   assert.equal(body.externalId, "40000006");
   assert.deepEqual(body.history, []);
-  const doc = generateOpenApi([module]);
+  const openapi = await fetch(`${base}/openapi.json`);
+  assert.equal(openapi.status, 200);
+  const doc = (await openapi.json()) as { paths?: Record<string, unknown> };
   assert.ok(doc.paths?.["/api/equipment"] && doc.paths?.["/api/equipment/{id}"]);
   assert.equal(await db.maintenanceRecord.count(), 1339);
   assert.equal(await db.maintenanceRecord.count({ where: { equipmentId: null } }), 898);
