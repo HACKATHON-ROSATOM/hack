@@ -36,7 +36,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function restore() {
-    if (user.value) return true
+    user.value = null
     try {
       const requestFetch = import.meta.server ? useRequestFetch() : $fetch
       setUser(await requestFetch('/api/auth/me'))
