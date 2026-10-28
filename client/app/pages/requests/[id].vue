@@ -1,6 +1,6 @@
 <script setup>
 import { useUserStore } from '~/stores/user'
-import { typeLabels, statusLabels, priorityLabels, statusColors, priorityColors, actionLabels, formatDate, inputDate } from '~/components/requests/requestUtils'
+import { typeLabels, statusLabels, priorityLabels, statusColors, priorityColors, actionLabels, formatDate, splitDeadline, joinDeadline } from '~/components/requests/requestUtils'
 import { apiProblem } from '~/utils/apiProblem'
 
 const route = useRoute()
@@ -15,7 +15,8 @@ const error = ref('')
 const actionError = ref('')
 const assigneeDraft = ref('')
 const priorityDraft = ref('')
-const dueDraft = ref('')
+const dueDate = ref('')
+const dueTime = ref('')
 const managementComment = ref('')
 const workComment = ref('')
 const closingComment = ref('')
@@ -26,11 +27,17 @@ const isAssignedEngineer = computed(() => userStore.role === 'engineer' && userS
 const canAssign = computed(() => ['dispatcher', 'director'].includes(userStore.role) && request.value?.status !== 'COMPLETED')
 const canAttachSnapshot = computed(() => ['dispatcher', 'director'].includes(userStore.role) && request.value?.source === 'MANUAL' && !request.value?.snapshot)
 
+function sameInstant(left, right) {
+  if (!left && !right) return true
+  return new Date(left).getTime() === new Date(right).getTime()
+}
 function setRequest(value) {
   request.value = value
   assigneeDraft.value = value.assigneeId || ''
   priorityDraft.value = value.priority
-  dueDraft.value = inputDate(value.currentDeadline)
+  const deadline = splitDeadline(value.currentDeadline)
+  dueDate.value = deadline.date
+  dueTime.value = deadline.time
 }
 function person(id) {
   if (!id) return 'Не указан'
@@ -76,17 +83,19 @@ async function assign() {
 async function schedule() {
   const body = {}
   if (priorityDraft.value !== request.value.priority) body.priority = priorityDraft.value
-  if (dueDraft.value !== inputDate(request.value.currentDeadline)) {
-    if (!dueDraft.value || Number.isNaN(new Date(dueDraft.value).getTime())) { actionError.value = 'Укажите корректный срок.'; return }
-    body.currentDeadline = new Date(dueDraft.value).toISOString()
+  const deadline = joinDeadline(dueDate.value, dueTime.value)
+  if (!sameInstant(deadline, request.value.currentDeadline)) {
+    if (!deadline) { actionError.value = 'Укажите корректный срок.'; return }
+    body.currentDeadline = deadline
   }
   if (!body.priority && !body.currentDeadline) { actionError.value = 'Измените срок или приоритет.'; return }
   if (managementComment.value.trim()) body.comment = managementComment.value.trim()
   await update('schedule', 'PATCH', body)
 }
 async function setAutoDeadline() {
-  if (!dueDraft.value || Number.isNaN(new Date(dueDraft.value).getTime())) { actionError.value = 'Укажите корректный срок.'; return }
-  await update('schedule', 'PATCH', { currentDeadline: new Date(dueDraft.value).toISOString(), ...(managementComment.value.trim() ? { comment: managementComment.value.trim() } : {}) })
+  const deadline = joinDeadline(dueDate.value, dueTime.value)
+  if (!deadline) { actionError.value = 'Укажите корректный срок.'; return }
+  await update('schedule', 'PATCH', { currentDeadline: deadline, ...(managementComment.value.trim() ? { comment: managementComment.value.trim() } : {}) })
 }
 async function attachSnapshot() {
   const number = Number(turbineNumberDraft.value)
@@ -160,8 +169,8 @@ async function convert() {
       <UCard v-if="isAssignedEngineer && request.status !== 'COMPLETED'" class="bg-white ring-1 ring-brand/15">
         <h2 class="mb-4 text-lg font-semibold text-gray-900">Работа по заявке</h2>
         <div class="space-y-4">
-          <UFormField label="Комментарий к действию"><UTextarea v-model="workComment" maxlength="2000" placeholder="Диагностика, выполненные работы или причина перевода в ремонт" :rows="3" class="w-full" /><p class="mt-1 text-sm text-gray-600">Комментарий сохраняется при смене статуса или переводе в ремонт.</p></UFormField>
-          <UFormField v-if="request.status === 'IN_PROGRESS'" label="Комментарий завершения" required><UTextarea v-model="closingComment" maxlength="2000" placeholder="Опишите результат перед закрытием" :rows="3" class="w-full" /></UFormField>
+          <UFormField label="Комментарий к действию"><UTextarea v-model.trim="workComment" maxlength="2000" placeholder="Диагностика, выполненные работы или причина перевода в ремонт" :rows="3" class="w-full" /><p class="mt-1 text-sm text-gray-600">Комментарий сохраняется при смене статуса или переводе в ремонт.</p></UFormField>
+          <UFormField v-if="request.status === 'IN_PROGRESS'" label="Комментарий завершения" required><UTextarea v-model.trim="closingComment" maxlength="2000" placeholder="Опишите результат перед закрытием" :rows="3" class="w-full" /></UFormField>
           <div class="flex flex-wrap gap-2">
             <UButton v-if="request.status === 'NEW'" color="primary" :disabled="busy" @click="transition('IN_PROGRESS')">Взять в работу</UButton>
             <UButton v-if="request.status === 'IN_PROGRESS'" color="warning" :disabled="busy" @click="transition('WAITING_PARTS')">Ожидание ЗИП</UButton>
@@ -175,9 +184,9 @@ async function convert() {
         <h2 class="mb-4 text-lg font-semibold text-gray-900">Управление заявкой</h2>
         <div class="space-y-4">
           <UFormField label="Исполнитель"><USelect v-model="assigneeDraft" :items="assigneeOptions" value-key="value" placeholder="Выберите инженера" class="w-full" /><p v-if="!engineers.length" class="mt-1 text-sm text-gray-600">Нет доступных инженеров.</p></UFormField>
-          <div v-if="userStore.role === 'director'" class="grid gap-4 sm:grid-cols-2"><UFormField label="Приоритет"><USelect v-model="priorityDraft" :items="priorityOptions" value-key="value" class="w-full" /></UFormField><UFormField label="Плановый срок"><UInput v-model="dueDraft" type="datetime-local" class="w-full" /></UFormField></div>
-          <UFormField v-if="userStore.role === 'dispatcher' && request.source === 'AUTO'" label="Плановый срок"><UInput v-model="dueDraft" type="datetime-local" class="w-full" /></UFormField>
-          <UFormField label="Комментарий к изменению"><UTextarea v-model="managementComment" maxlength="1000" :rows="2" class="w-full" /></UFormField>
+          <div v-if="userStore.role === 'director'" class="grid gap-4 sm:grid-cols-3"><UFormField label="Приоритет"><USelect v-model="priorityDraft" :items="priorityOptions" value-key="value" class="w-full" /></UFormField><UFormField label="Дата"><UInput v-model="dueDate" type="date" class="w-full" /></UFormField><UFormField label="Время"><UInput v-model="dueTime" type="time" class="w-full" /></UFormField></div>
+          <div v-if="userStore.role === 'dispatcher' && request.source === 'AUTO'" class="grid gap-4 sm:grid-cols-2"><UFormField label="Дата"><UInput v-model="dueDate" type="date" class="w-full" /></UFormField><UFormField label="Время"><UInput v-model="dueTime" type="time" class="w-full" /></UFormField></div>
+          <UFormField label="Комментарий к изменению"><UTextarea v-model.trim="managementComment" maxlength="1000" :rows="2" class="w-full" /></UFormField>
           <div class="flex flex-wrap gap-2"><UButton color="primary" :disabled="busy || !engineers.length" @click="assign">Назначить исполнителя</UButton><UButton v-if="userStore.role === 'director'" color="success" variant="soft" :disabled="busy" @click="schedule">Сохранить срок и приоритет</UButton><UButton v-if="userStore.role === 'dispatcher' && request.source === 'AUTO'" color="success" variant="soft" :disabled="busy" @click="setAutoDeadline">Сохранить срок</UButton></div>
         </div>
       </UCard>

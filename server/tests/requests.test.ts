@@ -102,6 +102,10 @@ const engineer2Headers = {
   authorization: `Bearer ${tokens.engineer2}`,
 };
 
+function futureDeadline() {
+  return new Date(Date.now() + 60 * 60 * 1000).toISOString();
+}
+
 const directorHeaders = {
   "content-type": "application/json",
   authorization: `Bearer ${tokens.director}`,
@@ -351,7 +355,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId,
         description: "Плановый осмотр ветрогенератора ВЭУ-01",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: futureDeadline(),
       }),
     });
     expect(response.status).toBe(201);
@@ -368,10 +372,26 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         equipmentId,
         description: "Срочный ремонт лопасти по распоряжению руководства",
         priority: "CRITICAL",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: futureDeadline(),
       }),
     });
     await expectProblem(response, 403, "/api/requests");
+  });
+
+  it("rejects ticket creation when the deadline is already in the past", async (t) => {
+    const { base } = await serveRequests(t);
+    const response = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "Заявка с уже просроченным сроком",
+        initialDeadline: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      }),
+    });
+    const problem = await expectProblem(response, 400, "/api/requests");
+    expect(problem.detail).toBe("Срок не может быть в прошлом.");
   });
 
   it("rejects ticket creation with non-existent assigneeId with 400", async (t) => {
@@ -383,7 +403,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Назначение несуществующего пользователя",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: futureDeadline(),
         assigneeId: randomUUID(),
       }),
     });
@@ -399,7 +419,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Назначение директора исполнителем",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: futureDeadline(),
         assigneeId: DEMO_USERS.director.id,
       }),
     });
@@ -412,7 +432,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Назначение дежурного исполнителем",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: futureDeadline(),
         assigneeId: DEMO_USERS.duty.id,
       }),
     });
@@ -428,7 +448,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Тест валидации переназначения",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: futureDeadline(),
       }),
     });
     const ticket = ticketResponseSchema.parse(await createRes.json());
@@ -872,11 +892,17 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Просроченный осмотр",
-        initialDeadline: yesterday,
+        initialDeadline: futureDeadline(),
         assigneeId: engineerA,
       }),
     });
     const overdueTicket = ticketResponseSchema.parse(await overdueRes.json());
+    const scheduleRes = await fetch(`${base}/api/requests/${overdueTicket.id}/schedule`, {
+      method: "PATCH",
+      headers: dutyHeaders,
+      body: JSON.stringify({ currentDeadline: yesterday }),
+    });
+    expect(scheduleRes.status).toBe(200);
 
     await fetch(`${base}/api/requests`, {
       method: "POST",
