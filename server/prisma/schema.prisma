@@ -76,3 +76,18 @@ model MaintenanceRecord {
 
   @@index([equipmentId])
 }
+
+enum UserRole {
+  DUTY
+  ENGINEER
+  DIRECTOR
+}
+
+model User {
+  id           String   @id @db.Uuid
+  login        String   @unique
+  passwordHash String
+  fullName     String
+  role         UserRole
+  createdAt    DateTime @default(now()) @db.Timestamptz
+}

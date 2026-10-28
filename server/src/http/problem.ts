@@ -14,9 +14,9 @@ export const problemSchema = z
   .meta({ id: "Problem", description: "RFC 9457 error without stack traces or database details." });
 
 export class ApiError extends Error {
-  readonly status: 400 | 404 | 409 | 415;
+  readonly status: 400 | 401 | 403 | 404 | 409 | 415;
 
-  constructor(status: 400 | 404 | 409 | 415, detail: string) {
+  constructor(status: 400 | 401 | 403 | 404 | 409 | 415, detail: string) {
     super(detail);
     this.name = "ApiError";
     this.status = status;
