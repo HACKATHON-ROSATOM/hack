@@ -11,11 +11,16 @@ const links = [
   { label: 'Мониторинг', href: '/monitoring' },
 ]
 
-const roleOptions = [
-  { label: 'Дежурный', value: 'dispatcher' },
-  { label: 'Сервисный инженер', value: 'engineer' },
-  { label: 'Технический директор', value: 'director' },
-]
+const roleLabels = {
+  dispatcher: 'Дежурный',
+  engineer: 'Сервисный инженер',
+  director: 'Технический директор',
+}
+
+async function logout() {
+  userStore.logout()
+  await navigateTo('/login')
+}
 
 const isActive = (href) =>
   href === '/'
@@ -24,28 +29,26 @@ const isActive = (href) =>
 </script>
 
 <template>
-  <header class="flex h-20 items-center justify-between border-b border-brand/15 bg-white px-4">
-    <nav class="flex items-center gap-6" aria-label="Основная навигация">
+  <header class="flex flex-wrap items-center justify-between gap-3 border-b border-brand/15 bg-white px-4 py-3">
+    <nav class="flex w-full items-center gap-4 overflow-x-auto sm:w-auto sm:gap-6" aria-label="Основная навигация">
       <NuxtLink
         v-for="link in links"
         :key="link.href"
         :to="link.href"
-        class="border-b-2 pb-1 text-base font-medium hover:text-brand-hover"
+        class="shrink-0 border-b-2 pb-1 text-base font-medium hover:text-brand-hover"
         :class="isActive(link.href) ? 'border-brand text-brand' : 'border-transparent text-gray-600'"
       >
         {{ link.label }}
       </NuxtLink>
     </nav>
 
-    <USelect
-      :model-value="userStore.role"
-      :items="roleOptions"
-      value-key="value"
-      label-key="label"
-      aria-label="Роль пользователя"
-      class="w-72"
-      @update:model-value="userStore.setRole"
-    />
+    <div v-if="userStore.user" class="flex w-full items-center justify-between gap-4 sm:w-auto">
+      <div class="text-left sm:text-right">
+        <p class="font-medium text-gray-900">{{ userStore.user.name }}</p>
+        <p class="text-sm text-gray-500">{{ roleLabels[userStore.role] }}</p>
+      </div>
+      <UButton color="neutral" variant="outline" @click="logout">Выйти</UButton>
+    </div>
   </header>
 </template>
 
