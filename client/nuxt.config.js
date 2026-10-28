@@ -1,5 +1,6 @@
 export default defineNuxtConfig({
-  modules: ['@nuxt/ui'],
+  modules: ['@nuxt/ui', '@pinia/nuxt'],
+  ui: { colorMode: false },
   css: ['~/assets/css/main.css'],
   app: {
     head: {
@@ -7,3 +8,4 @@ export default defineNuxtConfig({
     },
   },
 })
+
