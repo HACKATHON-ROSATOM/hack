@@ -18,11 +18,11 @@ services:
       migrate:
         condition: service_completed_successfully
     volumes:
-      - ./src:/app/src:ro
-      - prisma_client:/app/src/generated/prisma
-      - ./views:/app/views:ro
-      - ./public:/app/public:ro
-      - ./tests:/app/tests:ro
+      - ./server/src:/app/server/src:ro
+      - prisma_client:/app/server/src/generated/prisma
+      - ./server/views:/app/server/views:ro
+      - ./server/public:/app/server/public:ro
+      - ./server/tests:/app/server/tests:ro
     healthcheck:
       test:
         - CMD
@@ -38,7 +38,7 @@ services:
     build:
       context: .
       target: development
-    command: ["pnpm", "db:deploy"]
+    command: ["pnpm", "--filter", "express-app", "db:deploy"]
     environment:
       DATABASE_URL: "postgresql://express:express@db:5432/express_app"
     depends_on:

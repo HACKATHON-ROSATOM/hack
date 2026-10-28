@@ -6,8 +6,8 @@
 
 Первоначальный **captain — владелец репозитория**; в существующих правилах и шаблонах «тимлид» обозначает эту же роль согласования. Он может явно передать роль реальному участнику, записав решение в Issue. Роли можно совмещать; четыре участника не означают четыре обязательные должности.
 
-- Captain владеет `src/app.ts`, `src/server.ts`, `src/database.ts`, `src/config.ts`, `src/http/**` (включая общий registrar/generator OpenAPI), общими test helpers, конфигурацией, `prisma/schema.prisma` и интеграцией миграций, `package.json`, lockfile, build/Docker/Compose/CI и общими правилами. Он интегрирует фабрики модулей в единственный массив `apiModules` в `createApp`: отдельного списка документации нет.
-- Владелец модуля — **один реальный Issue Assignee**, назначенный до работы. В Issue укажите модуль, точные разрешённые файлы и отдельные файлы тестов. Он меняет свой `src/modules/<module>/**`, включая `schemas.ts` и метаданные операций `api.register` в `router.ts`, и свои тесты/скрипты. Notes — существующий образец, не разрешение придумывать новые продуктовые модули.
+- Captain владеет `server/src/app.ts`, `server/src/server.ts`, `server/src/database.ts`, `server/src/config.ts`, `server/src/http/**` (включая общий registrar/generator OpenAPI), общими test helpers, конфигурацией, `server/prisma/schema.prisma` и интеграцией миграций, `package.json`, lockfile, build/Docker/Compose/CI и общими правилами. Он интегрирует фабрики модулей в единственный массив `apiModules` в `createApp`: отдельного списка документации нет.
+- Владелец модуля — **один реальный Issue Assignee**, назначенный до работы. В Issue укажите модуль, точные разрешённые файлы и отдельные файлы тестов. Он меняет свой `server/src/modules/<module>/**`, включая `schemas.ts` и метаданные операций `api.register` в `router.ts`, и свои тесты/скрипты. Notes — существующий образец, не разрешение придумывать новые продуктовые модули.
 - Нет назначения или пересекаются границы — сначала captain уточняет Issue. Не угадывайте владельца и не редактируйте общий файл одновременно. Запрос подключения фабрики API-модуля, общего helper или изменения схемы оставьте в Issue: файл, требуемый интерфейс, контракт и зависимая задача. Captain выполняет интеграцию либо явно передаёт исключительное владение на время изменения.
 
 ## Одна задача — одна ветка и worktree
@@ -26,10 +26,10 @@ export HOST_PORT=3123
 export PORT=3123
 export POSTGRES_HOST_PORT=55123
 export DATABASE_URL=postgresql://express:express@127.0.0.1:55123/express_app
-pnpm db:generate
+pnpm --filter express-app db:generate
 docker compose up -d --wait db
-pnpm db:deploy
-pnpm dev
+pnpm --filter express-app db:deploy
+pnpm dev:server
 ```
 
 Node.js и версия pnpm должны соответствовать `package.json`. Здесь приложение работает на хосте: HTTP `http://127.0.0.1:3123`, PostgreSQL — отдельный Compose volume проекта `express_app_123`, URL совпадает с опубликованным портом `55123`. У других участников должны отличаться Compose project и оба host-порта; одинаковое имя БД внутри разных контейнеров безопасно. Логин/пароль выше — публичный локальный пример из Compose, не production credentials. При запуске всего Compose через `docker compose up --build` приложение внутри контейнера использует уже заданный в Compose URL `db:5432`; не переносите его в URL хостового процесса.

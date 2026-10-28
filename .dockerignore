@@ -1,9 +1,12 @@
 node_modules
-dist
+**/node_modules
+**/dist
+client/.nuxt
+client/.output
 .git
 .env
 .env.*
 !.env.example
 *.log
 .DS_Store
-src/generated/prisma
+server/src/generated/prisma

@@ -5,4 +5,8 @@ dist/
 !.env.example
 *.log
 .DS_Store
-src/generated/prisma/
+server/src/generated/prisma/
+
+client/.nuxt/
+client/.output/
+client/.data/
