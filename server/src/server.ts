@@ -4,6 +4,11 @@ import http from "node:http";
 import { createApp } from "./app.ts";
 import { environmentSchema } from "./config.ts";
 import { createDatabase } from "./database.ts";
+try {
+  process.loadEnvFile();
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+}
 import { createAuthService } from "./modules/auth/service.ts";
 import { Iec104Client } from "./modules/monitoring/iec104.ts";
 import { MonitoringService } from "./modules/monitoring/service.ts";
