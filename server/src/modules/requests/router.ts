@@ -318,7 +318,7 @@ export function createRequestsModule(
       path: `${basePath}/{id}/transitions`,
       operationId: "transitionRequestStatus",
       security: [{ bearerAuth: [] }],
-      summary: "Смена статуса заявки (State Machine)",
+      summary: "Изменить статус заявки",
       description:
         "Перевод заявки: NEW -> IN_PROGRESS -> COMPLETED или IN_PROGRESS <-> WAITING_PARTS. При COMPLETED обязателен непустой комментарий.",
       request: {
