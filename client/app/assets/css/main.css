@@ -1,2 +1,23 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
+
+@theme static {
+  --color-brand: #2563eb;
+  --color-brand-hover: #1d4ed8;
+  --color-light-green: #86efac;
+  --color-yellow: #facc15;
+  --color-red: #ef4444;
+}
+
+:root {
+  color-scheme: light;
+  --ui-primary: var(--color-brand);
+  --ui-color-primary-500: var(--color-brand);
+  --ui-color-primary-600: var(--color-brand-hover);
+  --ui-text-dimmed: var(--color-gray-600);
+  --ui-text-muted: var(--color-gray-600);
+  --ui-text-toned: var(--color-gray-600);
+  --ui-text: var(--color-gray-900);
+  --ui-text-highlighted: var(--color-gray-900);
+}
+
