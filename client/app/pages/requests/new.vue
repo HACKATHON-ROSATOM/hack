@@ -86,10 +86,10 @@ async function create() {
     <h1 class="text-2xl font-semibold text-gray-900">Новая заявка</h1>
     <UCard class="bg-white ring-1 ring-brand/15">
       <p v-if="loading" role="status">Загрузка данных…</p>
-      <template v-else-if="userStore.role !== 'dispatcher'"><p>Создание заявок доступно дежурному.</p><UButton to="/requests" variant="link" class="mt-3 p-0">К списку заявок</UButton></template>
+      <template v-else-if="userStore.role !== 'dispatcher'"><p>Создание заявок доступно дежурному.</p><UButton color="primary" to="/requests" variant="link" class="mt-3 p-0">К списку заявок</UButton></template>
       <template v-else>
         <p v-if="error" role="alert" class="mb-4 text-red-700">{{ error }}</p>
-        <div v-if="!equipment.length" class="space-y-3"><p>Оборудование не загружено или отсутствует. Создание заявки невозможно.</p><UButton variant="outline" @click="load">Повторить загрузку</UButton></div>
+        <div v-if="!equipment.length" class="space-y-3"><p>Оборудование не загружено или отсутствует. Создание заявки невозможно.</p><UButton color="warning" @click="load">Повторить загрузку</UButton></div>
         <UForm v-else :state="state" :validate="validate" class="space-y-4" @submit="create">
           <UFormField name="kind" label="Тип заявки" required><USelect v-model="state.kind" :items="kindOptions" value-key="value" placeholder="Выберите тип" class="w-full" /></UFormField>
           <UFormField name="equipmentId" label="Оборудование" required><USelect v-model="state.equipmentId" :items="equipmentOptions" value-key="value" placeholder="Выберите объект" class="w-full" /></UFormField>
@@ -98,7 +98,7 @@ async function create() {
           <UFormField name="due" label="Плановый срок" required><UInput v-model="state.due" type="datetime-local" class="w-full" /></UFormField>
           <UFormField name="assigneeId" label="Исполнитель"><USelect v-model="state.assigneeId" :items="engineerOptions" value-key="value" class="w-full" /><p v-if="!engineers.length" class="mt-1 text-sm text-gray-600">Нет доступных инженеров. Заявку можно назначить позже.</p></UFormField>
           <p v-if="formError" role="alert" class="text-red-700">{{ formError }}</p>
-          <div class="flex justify-end gap-2"><UButton to="/requests" variant="outline">Отмена</UButton><UButton type="submit" :loading="saving" :disabled="saving">Создать заявку</UButton></div>
+          <div class="flex justify-end gap-2"><UButton color="error" variant="soft" to="/requests">Отмена</UButton><UButton color="primary" type="submit" :loading="saving" :disabled="saving">Создать заявку</UButton></div>
         </UForm>
       </template>
     </UCard>
