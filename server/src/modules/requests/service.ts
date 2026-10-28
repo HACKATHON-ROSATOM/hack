@@ -118,6 +118,11 @@ export class RequestsService {
       throw new UnauthorizedError("Пользователь не идентифицирован.");
     }
 
+    const deadlineMs = new Date(input.initialDeadline).getTime();
+    if (Number.isNaN(deadlineMs) || deadlineMs < Date.now()) {
+      throw new ApiError(400, "Срок не может быть в прошлом.");
+    }
+
     if (this.db?.equipment) {
       const equipment = await this.db.equipment.findUnique({
         where: { id: input.equipmentId },

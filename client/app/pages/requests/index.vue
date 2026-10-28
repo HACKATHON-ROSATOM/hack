@@ -62,7 +62,7 @@ const filteredRequests = computed(() => requests.value.map((request) => {
     </div>
     <UCard class="bg-white ring-1 ring-brand/15">
       <div class="flex flex-wrap gap-3">
-        <UInput v-model="search" icon="i-lucide-search" placeholder="Поиск по заявкам" class="w-64" />
+        <UInput v-model.trim="search" icon="i-lucide-search" placeholder="Поиск по заявкам" class="w-64" />
         <USelect v-model="kind" :items="kindOptions" value-key="value" class="w-44" />
         <USelect v-model="status" :items="statusOptions" value-key="value" class="w-44" />
       </div>

@@ -48,7 +48,7 @@ onMounted(load)
   <main class="mx-auto max-w-6xl space-y-6 px-4 py-10">
     <h1 class="text-2xl font-semibold text-gray-900">Оборудование</h1>
     <UCard class="bg-white ring-1 ring-brand/15">
-      <UInput v-model="search" icon="i-lucide-search" placeholder="Поиск по названию, ID или расположению" class="mb-4 w-72 max-w-full" />
+      <UInput v-model.trim="search" icon="i-lucide-search" placeholder="Поиск по названию, ID или расположению" class="mb-4 w-72 max-w-full" />
       <p v-if="loading" role="status" class="text-sm text-gray-600">Загрузка оборудования…</p>
       <div v-else-if="error" role="alert" class="space-y-2 text-sm text-red-700">
         <p>{{ error }}</p><UButton color="warning" @click="load">Повторить</UButton>
