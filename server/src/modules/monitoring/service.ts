@@ -2,7 +2,7 @@ import type { Database } from "../../database.ts";
 
 const FIRST_IOA = 8192;
 const TURBINE_COUNT = 8;
-const FRESH_MS = 10_000;
+const FRESH_MS = 5_000;
 
 const signalDefinitions = [
   { key: "status", label: "Статус", unit: "" },

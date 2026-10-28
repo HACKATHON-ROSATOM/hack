@@ -94,6 +94,16 @@ model User {
   createdTickets  Ticket[]         @relation("TicketAuthor")
   assignedTickets Ticket[]         @relation("TicketAssignee")
   auditLogs       TicketAuditLog[]
+  sessions        AuthSession[]
+}
+
+model AuthSession {
+  tokenHash String   @id
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime @db.Timestamptz
+
+  @@index([expiresAt])
 }
 
 enum TicketType {

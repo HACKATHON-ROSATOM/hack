@@ -52,7 +52,10 @@ try {
     assert.equal(result.user.id, expected.id);
     assert.equal(result.user.role, expected.role);
     assert.deepEqual(auth.authenticate(`Bearer ${result.token}`), result.user);
-    assert.equal(createAuthService(db).authenticate(`Bearer ${result.token}`), null);
+    const restartedAuth = createAuthService(db);
+    await restartedAuth.restoreSessions();
+    assert.deepEqual(restartedAuth.authenticate(`Bearer ${result.token}`), result.user);
+    await auth.logout(`Bearer ${result.token}`);
   }
   const wrong = await fetch(`${base}/api/auth/login`, {
     method: "POST",

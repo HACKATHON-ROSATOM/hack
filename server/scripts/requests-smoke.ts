@@ -762,6 +762,7 @@ try {
 
   const restartedDb = createDatabase(envResult.data.DATABASE_URL);
   const restartedAuth = createAuthService(restartedDb);
+  await restartedAuth.restoreSessions();
   db = restartedDb;
   auth = restartedAuth;
   const restarted = await startServer(restartedDb, restartedAuth);

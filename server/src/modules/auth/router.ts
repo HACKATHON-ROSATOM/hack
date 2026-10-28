@@ -77,10 +77,11 @@ export function createAuthModule(auth: AuthService): ApiModule {
         401: problemResponse("Invalid session"),
       },
     },
-    (req, res) => {
+    async (req, res) => {
       if (!loginQuerySchema.safeParse(req.query).success)
         throw new ApiError(400, "Query parameters are not supported.");
-      if (!auth.logout(req.headers.authorization)) throw new ApiError(401, "Invalid session.");
+      if (!(await auth.logout(req.headers.authorization)))
+        throw new ApiError(401, "Invalid session.");
       res.status(204).end();
     },
   );

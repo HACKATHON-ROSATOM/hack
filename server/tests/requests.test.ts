@@ -67,10 +67,11 @@ const tokens = {
 };
 
 const mockAuth: AuthService = {
+  async restoreSessions() {},
   async login() {
     return null;
   },
-  logout() {
+  async logout() {
     return false;
   },
   authenticate(authorization?: string) {
@@ -356,7 +357,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
     expect(response.status).toBe(201);
   });
 
-  it("allows ticket creation for DIRECTOR role", async (t) => {
+  it("rejects ticket creation for DIRECTOR role", async (t) => {
     const { base } = await serveRequests(t);
     const equipmentId = randomUUID();
     const response = await fetch(`${base}/api/requests`, {
@@ -370,7 +371,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         initialDeadline: new Date().toISOString(),
       }),
     });
-    expect(response.status).toBe(201);
+    await expectProblem(response, 403, "/api/requests");
   });
 
   it("rejects ticket creation with non-existent assigneeId with 400", async (t) => {
@@ -847,6 +848,15 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
       body: JSON.stringify({ priority: "LOW" }),
     });
     await expectProblem(engineerScheduleRes, 403, `/api/requests/${ticket.id}/schedule`);
+    const dutyScheduleRes = await fetch(`${base}/api/requests/${ticket.id}/schedule`, {
+      method: "PATCH",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        currentDeadline: new Date(Date.now() + 259200000).toISOString(),
+        priority: "LOW",
+      }),
+    });
+    await expectProblem(dutyScheduleRes, 403, `/api/requests/${ticket.id}/schedule`);
   });
 
   it("provides analytics for overdue tickets and engineer workload", async (t) => {

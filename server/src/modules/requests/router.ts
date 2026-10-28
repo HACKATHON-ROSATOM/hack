@@ -44,8 +44,7 @@ export function createRequestsModule(
       operationId: "createRequest",
       security: [{ bearerAuth: [] }],
       summary: "Создать ручную заявку на осмотр или ремонт",
-      description:
-        "Создание новой заявки. Доступно для Дежурного (DUTY) или Директора (DIRECTOR). Требуется указание оборудования и срока.",
+      description: "Создание ручной заявки дежурным. Требуется указание оборудования и срока.",
       request: {
         query: noQuerySchema,
         body: {
@@ -68,7 +67,7 @@ export function createRequestsModule(
         },
         400: problemResponse("Невалидный формат тела запроса или параметров."),
         401: problemResponse("Требуется авторизация."),
-        403: problemResponse("Запрещено для текущей роли (требуется DUTY или DIRECTOR)."),
+        403: problemResponse("Запрещено для текущей роли (требуется DUTY)."),
         500: problemResponse("Внутренняя ошибка сервера."),
       },
     },
@@ -319,7 +318,8 @@ export function createRequestsModule(
       operationId: "updateRequestSchedule",
       security: [{ bearerAuth: [] }],
       summary: "Изменить плановый срок или приоритет",
-      description: "Изменение срока выполнения и приоритета (Технический директор или Дежурный).",
+      description:
+        "Директор изменяет срок и приоритет; дежурный может изменить только срок автоматической заявки.",
       request: {
         params: requestParamsSchema,
         query: noQuerySchema,
