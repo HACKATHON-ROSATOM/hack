@@ -153,26 +153,23 @@ export class RequestsService {
     this.assertRole(caller, ["DUTY", "DIRECTOR"], "Назначение исполнителя");
     await this.validateAssignee(assigneeId);
 
-    const existing = await this.getTicket(ticketId);
-    if (existing.status === "COMPLETED") {
-      throw new ApiError(400, "Нельзя переназначать исполнителя для уже завершённой заявки.");
-    }
+    return this.repo.mutate(ticketId, async (existing) => {
+      if (existing.status === "COMPLETED") {
+        throw new ApiError(400, "Нельзя переназначать исполнителя для уже завершённой заявки.");
+      }
 
-    const updated = await this.repo.update(
-      ticketId,
-      { assigneeId },
-      {
-        action: "ASSIGNED",
-        fieldName: "assigneeId",
-        oldValue: existing.assigneeId,
-        newValue: assigneeId,
-        comment: comment ?? "Назначен исполнитель",
-        authorId: caller.userId,
-      },
-    );
-
-    if (!updated) throw new ApiError(404, "Заявка не найдена.");
-    return updated;
+      return {
+        updates: { assigneeId },
+        auditEntries: {
+          action: "ASSIGNED",
+          fieldName: "assigneeId",
+          oldValue: existing.assigneeId,
+          newValue: assigneeId,
+          comment: comment ?? "Назначен исполнитель",
+          authorId: caller.userId,
+        },
+      };
+    });
   }
 
   async updateSchedule(
@@ -186,41 +183,40 @@ export class RequestsService {
   ): Promise<TicketWithDetails> {
     this.assertRole(caller, ["DIRECTOR", "DUTY"], "Изменение срока или приоритета");
 
-    const existing = await this.getTicket(ticketId);
-    if (existing.status === "COMPLETED") {
-      throw new ApiError(400, "Нельзя изменять срок или приоритет завершённой заявки.");
-    }
+    return this.repo.mutate(ticketId, async (existing) => {
+      if (existing.status === "COMPLETED") {
+        throw new ApiError(400, "Нельзя изменять срок или приоритет завершённой заявки.");
+      }
 
-    const updates: Partial<TicketWithDetails> = {};
-    const auditEntries = [];
+      const updates: Partial<TicketWithDetails> = {};
+      const auditEntries = [];
 
-    if (params.currentDeadline !== undefined) {
-      updates.currentDeadline = params.currentDeadline;
-      auditEntries.push({
-        action: "DEADLINE_CHANGED" as const,
-        fieldName: "currentDeadline",
-        oldValue: existing.currentDeadline,
-        newValue: params.currentDeadline,
-        comment: params.comment ?? null,
-        authorId: caller.userId,
-      });
-    }
+      if (params.currentDeadline !== undefined) {
+        updates.currentDeadline = params.currentDeadline;
+        auditEntries.push({
+          action: "DEADLINE_CHANGED" as const,
+          fieldName: "currentDeadline",
+          oldValue: existing.currentDeadline,
+          newValue: params.currentDeadline,
+          comment: params.comment ?? null,
+          authorId: caller.userId,
+        });
+      }
 
-    if (params.priority !== undefined) {
-      updates.priority = params.priority;
-      auditEntries.push({
-        action: "PRIORITY_CHANGED" as const,
-        fieldName: "priority",
-        oldValue: existing.priority,
-        newValue: params.priority,
-        comment: params.comment ?? null,
-        authorId: caller.userId,
-      });
-    }
+      if (params.priority !== undefined) {
+        updates.priority = params.priority;
+        auditEntries.push({
+          action: "PRIORITY_CHANGED" as const,
+          fieldName: "priority",
+          oldValue: existing.priority,
+          newValue: params.priority,
+          comment: params.comment ?? null,
+          authorId: caller.userId,
+        });
+      }
 
-    const updated = await this.repo.update(ticketId, updates, auditEntries);
-    if (!updated) throw new ApiError(404, "Заявка не найдена.");
-    return updated;
+      return { updates, auditEntries };
+    });
   }
 
   async transitionStatus(
@@ -229,80 +225,81 @@ export class RequestsService {
     comment: string | undefined,
     caller: CallerContext,
   ): Promise<TicketWithDetails> {
-    const existing = await this.getTicket(ticketId);
-
-    if (existing.status === "COMPLETED") {
-      this.assertRole(caller, ["DUTY", "DIRECTOR"], "Переоткрытие заявки");
-      if (!existing.assigneeId) {
-        throw new ApiError(
-          400,
-          "Нельзя возобновить работу по заявке без назначенного исполнителя.",
-        );
-      }
-    } else {
-      this.assertRole(caller, ["ENGINEER"], "Смена статуса заявки");
-      if (!existing.assigneeId) {
-        throw new ApiError(
-          400,
-          "Нельзя начать или изменить статус заявки без назначенного исполнителя.",
-        );
-      }
-      if (caller.userId !== existing.assigneeId) {
-        throw new ForbiddenError("Действие доступно только назначенному на заявку инженеру.");
-      }
-    }
-
-    const validTransitions: Record<TicketStatus, TicketStatus[]> = {
-      NEW: ["IN_PROGRESS"],
-      IN_PROGRESS: ["WAITING_PARTS", "COMPLETED"],
-      WAITING_PARTS: ["IN_PROGRESS"],
-      COMPLETED: ["IN_PROGRESS"],
-    };
-
-    const allowed = validTransitions[existing.status] ?? [];
-    if (!allowed.includes(toStatus)) {
-      throw new ApiError(
-        400,
-        `Недопустимый переход статуса из '${existing.status}' в '${toStatus}'. Разрешённые переходы: [${allowed.join(", ")}].`,
-      );
-    }
-
     const trimmedComment = comment?.trim();
-    if (existing.status === "COMPLETED" && toStatus === "IN_PROGRESS" && !trimmedComment) {
-      throw new ApiError(400, "Для переоткрытия заявки требуется указать причину.");
-    }
 
-    if (toStatus === "COMPLETED" && !trimmedComment) {
-      throw new ApiError(
-        400,
-        "Закрытие заявки отклонено: требуется обязательный непустой комментарий о результатах работы.",
-      );
-    }
+    return this.repo.mutate(ticketId, async (existing) => {
+      if (existing.status === "COMPLETED") {
+        this.assertRole(caller, ["DUTY", "DIRECTOR"], "Переоткрытие заявки");
+        if (!existing.assigneeId) {
+          throw new ApiError(
+            400,
+            "Нельзя возобновить работу по заявке без назначенного исполнителя.",
+          );
+        }
+      } else {
+        this.assertRole(caller, ["ENGINEER"], "Смена статуса заявки");
+        if (!existing.assigneeId) {
+          throw new ApiError(
+            400,
+            "Нельзя начать или изменить статус заявки без назначенного исполнителя.",
+          );
+        }
+        if (caller.userId !== existing.assigneeId) {
+          throw new ForbiddenError("Действие доступно только назначенному на заявку инженеру.");
+        }
+      }
 
-    const now = new Date().toISOString();
-    const isReopen = existing.status === "COMPLETED" && toStatus === "IN_PROGRESS";
-    const updates: Partial<TicketWithDetails> = {
-      status: toStatus,
-      completedAt: toStatus === "COMPLETED" ? now : isReopen ? null : existing.completedAt,
-      completionComment:
-        toStatus === "COMPLETED"
-          ? (trimmedComment ?? null)
-          : isReopen
-            ? null
-            : existing.completionComment,
-    };
+      const validTransitions: Record<TicketStatus, TicketStatus[]> = {
+        NEW: ["IN_PROGRESS"],
+        IN_PROGRESS: ["WAITING_PARTS", "COMPLETED"],
+        WAITING_PARTS: ["IN_PROGRESS"],
+        COMPLETED: ["IN_PROGRESS"],
+      };
 
-    const updated = await this.repo.update(ticketId, updates, {
-      action: "STATUS_CHANGED",
-      fieldName: "status",
-      oldValue: existing.status,
-      newValue: toStatus,
-      comment: trimmedComment ?? null,
-      authorId: caller.userId,
+      const allowed = validTransitions[existing.status] ?? [];
+      if (!allowed.includes(toStatus)) {
+        throw new ApiError(
+          400,
+          `Недопустимый переход статуса из '${existing.status}' в '${toStatus}'. Разрешённые переходы: [${allowed.join(", ")}].`,
+        );
+      }
+
+      if (existing.status === "COMPLETED" && toStatus === "IN_PROGRESS" && !trimmedComment) {
+        throw new ApiError(400, "Для переоткрытия заявки требуется указать причину.");
+      }
+
+      if (toStatus === "COMPLETED" && !trimmedComment) {
+        throw new ApiError(
+          400,
+          "Закрытие заявки отклонено: требуется обязательный непустой комментарий о результатах работы.",
+        );
+      }
+
+      const now = new Date().toISOString();
+      const isReopen = existing.status === "COMPLETED" && toStatus === "IN_PROGRESS";
+      const updates: Partial<TicketWithDetails> = {
+        status: toStatus,
+        completedAt: toStatus === "COMPLETED" ? now : isReopen ? null : existing.completedAt,
+        completionComment:
+          toStatus === "COMPLETED"
+            ? (trimmedComment ?? null)
+            : isReopen
+              ? null
+              : existing.completionComment,
+      };
+
+      return {
+        updates,
+        auditEntries: {
+          action: "STATUS_CHANGED",
+          fieldName: "status",
+          oldValue: existing.status,
+          newValue: toStatus,
+          comment: trimmedComment ?? null,
+          authorId: caller.userId,
+        },
+      };
     });
-
-    if (!updated) throw new ApiError(404, "Заявка не найдена.");
-    return updated;
   }
 
   async convertToRepair(
@@ -310,45 +307,42 @@ export class RequestsService {
     comment: string,
     caller: CallerContext,
   ): Promise<TicketWithDetails> {
-    this.assertRole(caller, ["ENGINEER"], "Перевод осмотра в ремонт");
-
-    const existing = await this.getTicket(ticketId);
-    if (!existing.assigneeId) {
-      throw new ApiError(400, "Нельзя перевести осмотр в ремонт без назначенного исполнителя.");
-    }
-    if (caller.userId !== existing.assigneeId) {
-      throw new ForbiddenError(
-        "Перевод осмотра в ремонт доступен только назначенному на заявку инженеру.",
-      );
-    }
-
-    if (existing.type !== "INSPECTION") {
-      throw new ApiError(400, "Перевод в ремонт возможен только для заявок вида 'INSPECTION'.");
-    }
-    if (existing.status === "COMPLETED") {
-      throw new ApiError(400, "Нельзя изменить вид завершённой заявки.");
-    }
-
     const trimmedComment = comment.trim();
     if (!trimmedComment) {
       throw new ApiError(400, "Требуется обоснование перевода осмотра в ремонт.");
     }
 
-    const updated = await this.repo.update(
-      ticketId,
-      { type: "REPAIR" },
-      {
-        action: "TYPE_CHANGED",
-        fieldName: "type",
-        oldValue: "INSPECTION",
-        newValue: "REPAIR",
-        comment: trimmedComment,
-        authorId: caller.userId,
-      },
-    );
+    return this.repo.mutate(ticketId, async (existing) => {
+      this.assertRole(caller, ["ENGINEER"], "Перевод осмотра в ремонт");
 
-    if (!updated) throw new ApiError(404, "Заявка не найдена.");
-    return updated;
+      if (!existing.assigneeId) {
+        throw new ApiError(400, "Нельзя перевести осмотр в ремонт без назначенного исполнителя.");
+      }
+      if (caller.userId !== existing.assigneeId) {
+        throw new ForbiddenError(
+          "Перевод осмотра в ремонт доступен только назначенному на заявку инженеру.",
+        );
+      }
+
+      if (existing.type !== "INSPECTION") {
+        throw new ApiError(400, "Перевод в ремонт возможен только для заявок вида 'INSPECTION'.");
+      }
+      if (existing.status === "COMPLETED") {
+        throw new ApiError(400, "Нельзя изменить вид завершённой заявки.");
+      }
+
+      return {
+        updates: { type: "REPAIR" },
+        auditEntries: {
+          action: "TYPE_CHANGED",
+          fieldName: "type",
+          oldValue: "INSPECTION",
+          newValue: "REPAIR",
+          comment: trimmedComment,
+          authorId: caller.userId,
+        },
+      };
+    });
   }
 
   async getOverdueTickets(caller: CallerContext): Promise<TicketWithDetails[]> {

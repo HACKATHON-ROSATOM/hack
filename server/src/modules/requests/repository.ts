@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "../../database.ts";
+import { ApiError } from "../../http/problem.ts";
 import type {
   AuditAction,
   Priority,
@@ -45,6 +46,13 @@ export interface IRequestsRepository {
     updates: Partial<Ticket>,
     auditEntries: AuditEntryData | AuditEntryData[],
   ): Promise<TicketWithDetails | null>;
+  mutate(
+    id: string,
+    operation: (existing: TicketWithDetails) => Promise<{
+      updates: Partial<Ticket>;
+      auditEntries: AuditEntryData | AuditEntryData[];
+    }>,
+  ): Promise<TicketWithDetails>;
   getOverdue(): Promise<TicketWithDetails[]>;
   getWorkload(): Promise<Array<{ engineerId: string; activeTicketsCount: number }>>;
 }
@@ -53,10 +61,24 @@ export class RequestsRepository implements IRequestsRepository {
   private db?: Database | undefined;
   private inMemoryTickets = new Map<string, Ticket>();
   private inMemoryAudit = new Map<string, TicketAuditLog[]>();
+  private lockQueues = new Map<string, Promise<void>>();
   private nextSequence = 1;
 
   constructor(db?: Database) {
     this.db = db;
+  }
+
+  private async acquireLock(id: string): Promise<() => void> {
+    const currentLock = this.lockQueues.get(id) ?? Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.lockQueues.set(id, promise);
+    await currentLock;
+    return () => {
+      if (this.lockQueues.get(id) === promise) {
+        this.lockQueues.delete(id);
+      }
+      resolve();
+    };
   }
 
   private isOverdue(status: TicketStatus, deadline: string | Date | null | undefined): boolean {
@@ -332,6 +354,7 @@ export class RequestsRepository implements IRequestsRepository {
 
     if (this.db) {
       return this.db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Ticket" WHERE "id" = ${id}::uuid FOR UPDATE`;
         const existing = await tx.ticket.findUnique({ where: { id } });
         if (!existing) return null;
 
@@ -427,6 +450,108 @@ export class RequestsRepository implements IRequestsRepository {
       isOverdue: this.isOverdue(updatedTicket.status, updatedTicket.currentDeadline),
       auditLogs: existingLogs,
     };
+  }
+
+  async mutate(
+    id: string,
+    operation: (existing: TicketWithDetails) => Promise<{
+      updates: Partial<Ticket>;
+      auditEntries: AuditEntryData | AuditEntryData[];
+    }>,
+  ): Promise<TicketWithDetails> {
+    if (this.db) {
+      return this.db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Ticket" WHERE "id" = ${id}::uuid FOR UPDATE`;
+        const existingRecord = await tx.ticket.findUnique({
+          where: { id },
+          include: {
+            auditLogs: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
+        if (!existingRecord) {
+          throw new ApiError(404, `Заявка с идентификатором '${id}' не найдена.`);
+        }
+
+        const existing = this.mapPrismaTicket(existingRecord);
+        const { updates, auditEntries } = await operation(existing);
+        const entries = Array.isArray(auditEntries) ? auditEntries : [auditEntries];
+
+        const updateData: {
+          status?: TicketStatus;
+          type?: TicketType;
+          priority?: Priority;
+          assigneeId?: string | null;
+          currentDeadline?: Date;
+          completionComment?: string | null;
+          completedAt?: Date | null;
+          auditLogs: {
+            create: Array<{
+              authorId: string;
+              action: AuditAction;
+              fieldName?: string | null;
+              oldValue?: string | null;
+              newValue?: string | null;
+              comment?: string | null;
+            }>;
+          };
+        } = {
+          auditLogs: {
+            create: entries.map((entry) => ({
+              authorId: entry.authorId ?? existingRecord.authorId,
+              action: entry.action === "TYPE_CHANGED" ? "COMMENT_ADDED" : entry.action,
+              fieldName: entry.fieldName ?? null,
+              oldValue: entry.oldValue ? String(entry.oldValue) : null,
+              newValue: entry.newValue ? String(entry.newValue) : null,
+              comment: entry.comment ?? null,
+            })),
+          },
+        };
+
+        if (updates.status !== undefined) updateData.status = updates.status;
+        if (updates.type !== undefined) updateData.type = updates.type;
+        if (updates.priority !== undefined) updateData.priority = updates.priority;
+        if (updates.assigneeId !== undefined) updateData.assigneeId = updates.assigneeId;
+        if (updates.currentDeadline) {
+          updateData.currentDeadline = new Date(updates.currentDeadline);
+        }
+        if (updates.completionComment !== undefined) {
+          updateData.completionComment = updates.completionComment;
+        }
+        if (updates.completedAt !== undefined) {
+          updateData.completedAt = updates.completedAt ? new Date(updates.completedAt) : null;
+        }
+
+        const updated = await tx.ticket.update({
+          where: { id },
+          data: updateData,
+          include: {
+            auditLogs: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
+
+        return this.mapPrismaTicket(updated);
+      });
+    }
+
+    const release = await this.acquireLock(id);
+    try {
+      const existing = await this.findById(id);
+      if (!existing) {
+        throw new ApiError(404, `Заявка с идентификатором '${id}' не найдена.`);
+      }
+      const { updates, auditEntries } = await operation(existing);
+      const updated = await this.update(id, updates, auditEntries);
+      if (!updated) {
+        throw new ApiError(404, `Заявка с идентификатором '${id}' не найдена.`);
+      }
+      return updated;
+    } finally {
+      release();
+    }
   }
 
   async getOverdue(): Promise<TicketWithDetails[]> {
