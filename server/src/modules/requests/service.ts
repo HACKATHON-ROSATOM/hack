@@ -67,6 +67,23 @@ export class RequestsService {
     }
   }
 
+  private async validateAssignee(assigneeId: string): Promise<void> {
+    if (this.db?.user) {
+      const user = await this.db.user.findUnique({
+        where: { id: assigneeId },
+      });
+      if (!user) {
+        throw new ApiError(400, `Пользователь с идентификатором '${assigneeId}' не найден.`);
+      }
+      if (user.role !== "ENGINEER") {
+        throw new ApiError(
+          400,
+          `Назначение отклонено: пользователь '${assigneeId}' имеет роль '${user.role}', а исполнителем заявки может быть только пользователь с ролью 'ENGINEER'.`,
+        );
+      }
+    }
+  }
+
   async createTicket(
     input: CreateTicketServiceInput,
     caller: CallerContext,
@@ -86,6 +103,10 @@ export class RequestsService {
           `Оборудование с идентификатором '${input.equipmentId}' не найдено в реестре.`,
         );
       }
+    }
+
+    if (input.assigneeId) {
+      await this.validateAssignee(input.assigneeId);
     }
 
     return this.repo.create({
@@ -130,6 +151,7 @@ export class RequestsService {
     caller: CallerContext,
   ): Promise<TicketWithDetails> {
     this.assertRole(caller, ["DUTY", "DIRECTOR"], "Назначение исполнителя");
+    await this.validateAssignee(assigneeId);
 
     const existing = await this.getTicket(ticketId);
     if (existing.status === "COMPLETED") {
@@ -211,8 +233,23 @@ export class RequestsService {
 
     if (existing.status === "COMPLETED") {
       this.assertRole(caller, ["DUTY", "DIRECTOR"], "Переоткрытие заявки");
+      if (!existing.assigneeId) {
+        throw new ApiError(
+          400,
+          "Нельзя возобновить работу по заявке без назначенного исполнителя.",
+        );
+      }
     } else {
       this.assertRole(caller, ["ENGINEER"], "Смена статуса заявки");
+      if (!existing.assigneeId) {
+        throw new ApiError(
+          400,
+          "Нельзя начать или изменить статус заявки без назначенного исполнителя.",
+        );
+      }
+      if (caller.userId !== existing.assigneeId) {
+        throw new ForbiddenError("Действие доступно только назначенному на заявку инженеру.");
+      }
     }
 
     const validTransitions: Record<TicketStatus, TicketStatus[]> = {
@@ -276,6 +313,15 @@ export class RequestsService {
     this.assertRole(caller, ["ENGINEER"], "Перевод осмотра в ремонт");
 
     const existing = await this.getTicket(ticketId);
+    if (!existing.assigneeId) {
+      throw new ApiError(400, "Нельзя перевести осмотр в ремонт без назначенного исполнителя.");
+    }
+    if (caller.userId !== existing.assigneeId) {
+      throw new ForbiddenError(
+        "Перевод осмотра в ремонт доступен только назначенному на заявку инженеру.",
+      );
+    }
+
     if (existing.type !== "INSPECTION") {
       throw new ApiError(400, "Перевод в ремонт возможен только для заявок вида 'INSPECTION'.");
     }
