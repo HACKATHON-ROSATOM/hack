@@ -4,6 +4,7 @@ import http from "node:http";
 import { createApp } from "./app.ts";
 import { environmentSchema } from "./config.ts";
 import { createDatabase } from "./database.ts";
+import { createAuthService } from "./modules/auth/service.ts";
 import { Iec104Client } from "./modules/monitoring/iec104.ts";
 import { MonitoringService } from "./modules/monitoring/service.ts";
 
@@ -31,6 +32,15 @@ try {
   process.exit(1);
 }
 
+const auth = createAuthService(db);
+try {
+  await auth.restoreSessions();
+} catch {
+  console.error("Unable to restore sessions. Check database migrations and availability.");
+  await db.$disconnect();
+  process.exit(1);
+}
+
 const monitoring = new MonitoringService(db);
 const iecClient =
   config.IEC104_HOST && config.IEC104_PORT
@@ -45,7 +55,7 @@ const iecClient =
         },
       })
     : undefined;
-const app = createApp(db, undefined, monitoring);
+const app = createApp(db, auth, monitoring);
 iecClient?.start();
 
 app.set("port", config.PORT);

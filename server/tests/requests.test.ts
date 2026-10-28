@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import express from "express";
-import { describe, expect, it, type TestContext } from "vitest";
+import { describe, expect, it, vi, type TestContext } from "vitest";
 import { z } from "zod";
 
 import type { Database } from "../src/database.ts";
@@ -67,10 +67,11 @@ const tokens = {
 };
 
 const mockAuth: AuthService = {
+  async restoreSessions() {},
   async login() {
     return null;
   },
-  logout() {
+  async logout() {
     return false;
   },
   authenticate(authorization?: string) {
@@ -360,7 +361,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
     expect(response.status).toBe(201);
   });
 
-  it("allows ticket creation for DIRECTOR role", async (t) => {
+  it("rejects ticket creation for DIRECTOR role", async (t) => {
     const { base } = await serveRequests(t);
     const equipmentId = randomUUID();
     const response = await fetch(`${base}/api/requests`, {
@@ -374,7 +375,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         initialDeadline: futureDeadline(),
       }),
     });
-    expect(response.status).toBe(201);
+    await expectProblem(response, 403, "/api/requests");
   });
 
   it("rejects ticket creation when the deadline is already in the past", async (t) => {
@@ -867,6 +868,15 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
       body: JSON.stringify({ priority: "LOW" }),
     });
     await expectProblem(engineerScheduleRes, 403, `/api/requests/${ticket.id}/schedule`);
+    const dutyScheduleRes = await fetch(`${base}/api/requests/${ticket.id}/schedule`, {
+      method: "PATCH",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        currentDeadline: new Date(Date.now() + 259200000).toISOString(),
+        priority: "LOW",
+      }),
+    });
+    await expectProblem(dutyScheduleRes, 403, `/api/requests/${ticket.id}/schedule`);
   });
 
   it("provides analytics for overdue tickets and engineer workload", async (t) => {
@@ -874,7 +884,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const engineerA = DEMO_USERS.engineer.id;
     const engineerB = DEMO_USERS.engineer2.id;
 
-    const yesterday = new Date(Date.now() - 86400000).toISOString();
+    const deadline = Date.now() + 3_600_000;
     const overdueRes = await fetch(`${base}/api/requests`, {
       method: "POST",
       headers: dutyHeaders,
@@ -882,17 +892,11 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Просроченный осмотр",
-        initialDeadline: futureDeadline(),
+        initialDeadline: new Date(deadline).toISOString(),
         assigneeId: engineerA,
       }),
     });
     const overdueTicket = ticketResponseSchema.parse(await overdueRes.json());
-    const scheduleRes = await fetch(`${base}/api/requests/${overdueTicket.id}/schedule`, {
-      method: "PATCH",
-      headers: dutyHeaders,
-      body: JSON.stringify({ currentDeadline: yesterday }),
-    });
-    expect(scheduleRes.status).toBe(200);
 
     await fetch(`${base}/api/requests`, {
       method: "POST",
@@ -917,6 +921,8 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
         assigneeId: engineerB,
       }),
     });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(deadline + 1);
+    t.onTestFinished(() => clock.mockRestore());
 
     const overdueListRes = await fetch(`${base}/api/requests/analytics/overdue`, {
       headers: dutyHeaders,

@@ -28,6 +28,7 @@ export default defineEventHandler(async (event) => {
     sameSite: 'lax',
     secure: getRequestURL(event).protocol === 'https:',
     path: '/',
+    maxAge: 8 * 60 * 60,
   })
   setResponseHeader(event, 'Cache-Control', 'no-store')
   return result.user

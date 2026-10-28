@@ -31,10 +31,39 @@ describe("authentication", () => {
         },
       ].map(async (user) => ({ ...user, passwordHash: await hashPassword("demo-password") })),
     );
+    const sessions = new Map<string, { tokenHash: string; userId: string; expiresAt: Date }>();
     const db = {
       user: {
         findUnique: async ({ where }: { where: { login: string } }) =>
           users.find((user) => user.login === where.login) ?? null,
+      },
+      authSession: {
+        create: async ({
+          data,
+        }: {
+          data: { tokenHash: string; userId: string; expiresAt: Date };
+        }) => {
+          sessions.set(data.tokenHash, data);
+          return data;
+        },
+        findMany: async () =>
+          [...sessions.values()].map((session) => ({
+            ...session,
+            user: users.find((user) => user.id === session.userId),
+          })),
+        deleteMany: async ({
+          where,
+        }: {
+          where: { tokenHash?: string; expiresAt?: { lte: Date } };
+        }) => {
+          for (const [key, session] of sessions) {
+            if (
+              where.tokenHash === key ||
+              (where.expiresAt && session.expiresAt <= where.expiresAt.lte)
+            )
+              sessions.delete(key);
+          }
+        },
       },
     } as unknown as Database;
     const auth = createAuthService(db);
@@ -72,7 +101,9 @@ describe("authentication", () => {
           role: expected.role,
         });
         expect(auth.authenticate(`Bearer ${result.token}`)).toEqual(result.user);
-        expect(createAuthService(db).authenticate(`Bearer ${result.token}`)).toBeNull();
+        const restartedAuth = createAuthService(db);
+        await restartedAuth.restoreSessions();
+        expect(restartedAuth.authenticate(`Bearer ${result.token}`)).toEqual(result.user);
         const headers = { Authorization: `Bearer ${result.token}` };
         const current = await fetch(`http://127.0.0.1:${address.port}/api/auth/me`, { headers });
         expect(current.status).toBe(200);

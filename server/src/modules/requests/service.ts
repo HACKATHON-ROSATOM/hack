@@ -113,7 +113,7 @@ export class RequestsService {
     input: CreateTicketServiceInput,
     caller: CallerContext,
   ): Promise<TicketWithDetails> {
-    this.assertRole(caller, ["DUTY", "DIRECTOR"], "Создание заявки");
+    this.assertRole(caller, ["DUTY"], "Создание заявки");
     if (!caller.userId) {
       throw new UnauthorizedError("Пользователь не идентифицирован.");
     }
@@ -214,6 +214,9 @@ export class RequestsService {
     this.assertRole(caller, ["DIRECTOR", "DUTY"], "Изменение срока или приоритета");
 
     return this.repo.mutate(ticketId, async (existing) => {
+      if (caller.role === "DUTY" && (existing.source !== "AUTO" || params.priority !== undefined)) {
+        throw new ForbiddenError("Дежурный может менять только срок автоматической заявки.");
+      }
       if (existing.status === "COMPLETED") {
         throw new ApiError(400, "Нельзя изменять срок или приоритет завершённой заявки.");
       }
