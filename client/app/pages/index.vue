@@ -28,7 +28,7 @@ const statusMetrics = computed(() => Object.entries(statusLabels).map(([status, 
   status,
   label,
   count: relevant.value.filter(item => item.status === status).length,
-  color: `var(--color-${statusColors[status]})`,
+  color: `var(--ui-${statusColors[status]})`,
 })))
 const chartData = computed(() => statusMetrics.value.filter(item => item.count > 0))
 const workloadRows = computed(() => engineers.value
@@ -84,7 +84,7 @@ onMounted(load)
         <h2 class="text-lg font-semibold text-gray-900">Заявки по статусам</h2>
         <p class="mt-1 text-sm text-gray-600">Текущее распределение всех заявок</p>
         <p v-if="!relevant.length" class="mt-4 text-sm text-gray-600">Заявок пока нет.</p>
-        <div v-else class="mt-4 flex flex-wrap items-center gap-6">
+        <div v-else class="mt-4 flex flex-wrap items-center justify-center gap-6">
           <UChart
             type="donut"
             :data="chartData"
@@ -96,10 +96,10 @@ onMounted(load)
             aria-label="Распределение заявок по статусам"
             class="w-full max-w-64"
           />
-          <ul class="min-w-48 flex-1 space-y-3">
+          <ul class="space-y-3">
             <li v-for="item in statusMetrics" :key="item.status" class="flex items-center gap-2 text-sm text-gray-900">
               <span aria-hidden="true" class="size-3 shrink-0 rounded-full" :style="{ backgroundColor: item.color }" />
-              <span class="flex-1">{{ item.label }}</span>
+              <span>{{ item.label }}</span>
               <span class="font-semibold tabular-nums">{{ item.count }}</span>
             </li>
           </ul>

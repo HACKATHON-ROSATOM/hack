@@ -1,7 +1,7 @@
 export const typeLabels = { INSPECTION: 'Осмотр', REPAIR: 'Ремонт' }
 export const statusLabels = { NEW: 'Новая', IN_PROGRESS: 'В работе', WAITING_PARTS: 'Ожидание ЗИП', COMPLETED: 'Выполнено' }
 export const priorityLabels = { LOW: 'Низкий', MEDIUM: 'Средний', HIGH: 'Высокий', CRITICAL: 'Критичный' }
-export const statusColors = { NEW: 'warning', IN_PROGRESS: 'warning', WAITING_PARTS: 'error', COMPLETED: 'success' }
+export const statusColors = { NEW: 'primary', IN_PROGRESS: 'warning', WAITING_PARTS: 'error', COMPLETED: 'success' }
 export const priorityColors = { LOW: 'success', MEDIUM: 'warning', HIGH: 'error', CRITICAL: 'error' }
 export const actionLabels = { CREATED: 'Создана', STATUS_CHANGED: 'Изменён статус', ASSIGNED: 'Назначен исполнитель', DEADLINE_CHANGED: 'Изменён срок', PRIORITY_CHANGED: 'Изменён приоритет', TYPE_CHANGED: 'Изменён тип', COMMENT_ADDED: 'Добавлен комментарий' }
 
