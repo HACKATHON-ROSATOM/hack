@@ -27,7 +27,8 @@ export type TelemetrySnapshot = {
 export type ObservationInput = { ca: number; ioa: number; value: number; receivedAt: Date };
 type Observation = ObservationInput & { id: number };
 export type StatusEvent = TelemetrySnapshot & { readonly baseline: boolean };
-type StatusListener = (event: StatusEvent) => void | Promise<void>;
+type StatusListener = (event: StatusEvent, observationId: number) => void | Promise<void>;
+type PendingObservation = Observation & { alarmBaseline: boolean; alarmFresh: boolean };
 
 export function isMonitoringIoa(ioa: number): boolean {
   return (
@@ -59,6 +60,9 @@ export class MonitoringService {
   private statusListeners = new Set<StatusListener>();
   private baselineIoas = new Set<number>();
   private receiveQueue: Promise<void> = Promise.resolve();
+  private processing: Promise<void> | undefined;
+  private retryTimer: NodeJS.Timeout | undefined;
+  private processingEnabled = false;
 
   private readonly db: Database;
 
@@ -71,7 +75,7 @@ export class MonitoringService {
       this.connected = connected;
       this.generation += 1;
       this.currentIds.clear();
-      this.baselineIoas.clear();
+      this.baselineIoas = new Set<number>();
     }
   }
 
@@ -80,6 +84,52 @@ export class MonitoringService {
     return () => {
       this.statusListeners.delete(listener);
     };
+  }
+
+  startProcessing(): void {
+    if (this.processingEnabled) return;
+    this.processingEnabled = true;
+    this.scheduleProcessing(0);
+  }
+
+  async stopProcessing(): Promise<void> {
+    this.processingEnabled = false;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    await this.processing;
+    await this.receiveQueue;
+  }
+
+  private scheduleProcessing(delay: number): void {
+    if (!this.processingEnabled || this.retryTimer || this.processing) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.processing = this.drainPending()
+        .catch((error: unknown) => {
+          console.error("Alarm observation processing failed:", error);
+        })
+        .finally(() => {
+          this.processing = undefined;
+          this.scheduleProcessing(1_000);
+        });
+    }, delay);
+    this.retryTimer.unref();
+  }
+
+  private async drainPending(): Promise<void> {
+    while (this.processingEnabled && this.statusListeners.size > 0) {
+      const [stored] = await this.db.$queryRaw<PendingObservation[]>`
+        SELECT "id", "ca", "ioa", "value", "receivedAt", "alarmBaseline", "alarmFresh"
+        FROM "TelemetryObservation" WHERE "alarmProcessed" = false ORDER BY "id" LIMIT 1
+      `;
+      if (!stored) return;
+      const event: StatusEvent = Object.freeze({
+        ...this.toSnapshot(stored),
+        fresh: stored.alarmFresh,
+        baseline: stored.alarmBaseline,
+      });
+      for (const listener of this.statusListeners) await listener(event, stored.id);
+    }
   }
 
   async receive(input: ObservationInput): Promise<void> {
@@ -95,16 +145,40 @@ export class MonitoringService {
     const observation = { ...input, receivedAt: new Date(input.receivedAt) };
     const generation = this.generation;
     const receivedConnected = this.connected;
+    const baselines = this.baselineIoas;
+    const isStatus = (input.ioa - FIRST_IOA) % signalDefinitions.length === 0;
     const task = this.receiveQueue.then(async () => {
-      const stored = await this.db.telemetryObservation.create({ data: observation });
+      const baseline = receivedConnected && isStatus ? !baselines.has(input.ioa) : null;
+      const stored = await this.db
+        .$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(811048192)`;
+          const age = Date.now() - observation.receivedAt.getTime();
+          const fresh =
+            receivedConnected &&
+            this.connected &&
+            this.generation === generation &&
+            age >= 0 &&
+            age <= FRESH_MS;
+          const [row] = await tx.$queryRaw<Observation[]>`
+          INSERT INTO "TelemetryObservation"
+            ("ca", "ioa", "value", "receivedAt", "alarmBaseline", "alarmFresh", "alarmProcessed")
+          VALUES (${observation.ca}, ${observation.ioa}, ${observation.value}, ${observation.receivedAt},
+            ${baseline}, ${baseline === null ? null : fresh}, ${baseline === null})
+          RETURNING "id", "ca", "ioa", "value", "receivedAt"
+        `;
+          if (!row) throw new Error("Telemetry observation was not stored.");
+          return row;
+        })
+        .catch((error: unknown) => {
+          if (baseline !== null) baselines.delete(input.ioa);
+          throw error;
+        });
+      if (baseline !== null) {
+        baselines.add(stored.ioa);
+        this.scheduleProcessing(0);
+      }
       if (receivedConnected && this.connected && this.generation === generation) {
         this.currentIds.set(stored.ioa, stored.id);
-        if ((stored.ioa - FIRST_IOA) % signalDefinitions.length === 0) {
-          const baseline = !this.baselineIoas.has(stored.ioa);
-          this.baselineIoas.add(stored.ioa);
-          const snapshot: StatusEvent = Object.freeze({ ...this.toSnapshot(stored), baseline });
-          for (const listener of this.statusListeners) await listener(snapshot);
-        }
       }
     });
     this.receiveQueue = task.catch(() => {});

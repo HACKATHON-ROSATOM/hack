@@ -52,12 +52,39 @@ const filteredRequests = computed(() => requests.value.map((request) => {
     && (kind.value === 'all' || request.type === kind.value)
     && (status.value === 'all' || request.status === status.value)
 }))
+
+function csvCell(value) {
+  let text = String(value ?? '')
+  if (/^[\s\uFEFF]*[=+\-@\t\r\n]/.test(text)) text = `'${text}`
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function exportRequests() {
+  if (loading.value || error.value || !filteredRequests.value.length) return
+  const rows = [
+    ['Номер заявки', 'Тип', 'Объект', 'Приоритет', 'Срок', 'Исполнитель', 'Статус', 'Просрочена', 'Описание'],
+    ...filteredRequests.value.map((request) => [
+      request.ticketNumber, request.kind, request.equipment, request.priorityLabel, request.due,
+      request.assignee || 'Не назначен', request.statusLabel, request.isOverdue ? 'Да' : 'Нет', request.description,
+    ]),
+  ]
+  const csv = '\uFEFF' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n')
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'requests.csv'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+}
 </script>
 
 <template>
   <main class="mx-auto max-w-6xl space-y-6 px-4 py-10">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-2xl font-semibold text-gray-900">Заявки</h1>
+      <UButton color="neutral" variant="outline" :disabled="loading || !!error || !filteredRequests.length" @click="exportRequests">Экспорт CSV</UButton>
       <UButton v-if="userStore.role === 'dispatcher'" color="primary" to="/requests/new">Создать заявку</UButton>
     </div>
     <UCard class="bg-white ring-1 ring-brand/15">
