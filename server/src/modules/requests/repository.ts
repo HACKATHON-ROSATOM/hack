@@ -49,40 +49,6 @@ export interface IRequestsRepository {
   getWorkload(): Promise<Array<{ engineerId: string; activeTicketsCount: number }>>;
 }
 
-interface DbTicketRow {
-  id: string;
-  ticketNumber: number;
-  type: TicketType;
-  status: TicketStatus;
-  priority: Priority;
-  equipmentId: string;
-  authorId: string | null;
-  assigneeId: string | null;
-  description: string;
-  initialDeadline: Date | string;
-  currentDeadline: Date | string;
-  completionComment: string | null;
-  createdAt: Date | string;
-  completedAt: Date | string | null;
-}
-
-interface DbAuditRow {
-  id: string;
-  ticketId: string;
-  authorId: string | null;
-  action: AuditAction;
-  fieldName: string | null;
-  oldValue: string | null;
-  newValue: string | null;
-  comment: string | null;
-  createdAt: Date | string;
-}
-
-interface DbWorkloadRow {
-  assigneeId: string;
-  count: number | string;
-}
-
 export class RequestsRepository implements IRequestsRepository {
   private db?: Database | undefined;
   private inMemoryTickets = new Map<string, Ticket>();
@@ -99,121 +65,117 @@ export class RequestsRepository implements IRequestsRepository {
     return ms < Date.now();
   }
 
-  private mapToTicketWithDetails(
-    record: DbTicketRow,
-    auditLogs: DbAuditRow[] = [],
-  ): TicketWithDetails {
-    const isOverdue = this.isOverdue(record.status, record.currentDeadline);
-
+  private mapPrismaTicket(ticket: {
+    id: string;
+    ticketNumber: number;
+    type: TicketType;
+    status: TicketStatus;
+    priority: Priority;
+    equipmentId: string;
+    authorId: string;
+    assigneeId: string | null;
+    description: string;
+    initialDeadline: Date;
+    currentDeadline: Date;
+    completionComment: string | null;
+    createdAt: Date;
+    completedAt: Date | null;
+    auditLogs?: Array<{
+      id: string;
+      ticketId: string;
+      authorId: string;
+      action: AuditAction;
+      fieldName: string | null;
+      oldValue: string | null;
+      newValue: string | null;
+      comment: string | null;
+      createdAt: Date;
+    }>;
+  }): TicketWithDetails {
+    const isOverdue = this.isOverdue(ticket.status, ticket.currentDeadline);
     return {
-      id: record.id,
-      ticketNumber: record.ticketNumber,
-      type: record.type,
+      id: ticket.id,
+      ticketNumber: ticket.ticketNumber,
+      type: ticket.type,
       source: "MANUAL",
-      status: record.status,
-      priority: record.priority,
-      equipmentId: record.equipmentId,
-      authorId: record.authorId ?? null,
-      assigneeId: record.assigneeId ?? null,
-      description: record.description,
-      initialDeadline: new Date(record.initialDeadline).toISOString(),
-      currentDeadline: new Date(record.currentDeadline).toISOString(),
-      completionComment: record.completionComment ?? null,
-      createdAt: new Date(record.createdAt).toISOString(),
-      completedAt: record.completedAt ? new Date(record.completedAt).toISOString() : null,
+      status: ticket.status,
+      priority: ticket.priority,
+      equipmentId: ticket.equipmentId,
+      authorId: ticket.authorId,
+      assigneeId: ticket.assigneeId,
+      description: ticket.description,
+      initialDeadline: ticket.initialDeadline.toISOString(),
+      currentDeadline: ticket.currentDeadline.toISOString(),
+      completionComment: ticket.completionComment,
+      createdAt: ticket.createdAt.toISOString(),
+      completedAt: ticket.completedAt ? ticket.completedAt.toISOString() : null,
       version: 1,
       isOverdue,
-      auditLogs: auditLogs.map((log) => ({
+      auditLogs: (ticket.auditLogs ?? []).map((log) => ({
         id: log.id,
         ticketId: log.ticketId,
-        authorId: log.authorId ?? null,
+        authorId: log.authorId,
         action: log.fieldName === "type" ? "TYPE_CHANGED" : log.action,
-        fieldName: log.fieldName ?? null,
-        oldValue: log.oldValue ?? null,
-        newValue: log.newValue ?? null,
-        comment: log.comment ?? null,
-        createdAt: new Date(log.createdAt).toISOString(),
+        fieldName: log.fieldName,
+        oldValue: log.oldValue,
+        newValue: log.newValue,
+        comment: log.comment,
+        createdAt: log.createdAt.toISOString(),
       })),
     };
   }
 
-  private async ensureSeedUsers(): Promise<void> {
-    if (!this.db) return;
-    try {
-      await this.db.$executeRawUnsafe(`
-        INSERT INTO "User" ("id", "username", "password", "fullName", "role")
-        VALUES 
-          ('11111111-1111-4111-8111-111111111111', 'duty', 'duty123', 'Дежурный диспетчер', 'DUTY'::"Role"),
-          ('22222222-2222-4222-8222-222222222222', 'engineer', 'engineer123', 'Сменный инженер', 'ENGINEER'::"Role"),
-          ('33333333-3333-4333-8333-333333333333', 'director', 'director123', 'Главный директор', 'DIRECTOR'::"Role")
-        ON CONFLICT ("id") DO NOTHING;
-      `);
-    } catch {}
-  }
-
   async create(data: CreateTicketData): Promise<TicketWithDetails> {
     if (this.db) {
-      await this.ensureSeedUsers();
-      const id = randomUUID();
-      const auditId = randomUUID();
       const initialDeadline = new Date(data.initialDeadline);
+      const auditCreate: Array<{
+        authorId: string;
+        action: AuditAction;
+        fieldName?: string | null;
+        oldValue?: string | null;
+        newValue?: string | null;
+        comment?: string | null;
+      }> = [
+        {
+          authorId: data.authorId,
+          action: "CREATED",
+          comment: "Заявка создана",
+        },
+      ];
 
-      return this.db.$transaction(async (tx) => {
-        const inserted = await tx.$queryRawUnsafe<DbTicketRow[]>(
-          `INSERT INTO "Ticket" (
-            "id", "type", "status", "priority", "description",
-            "equipmentId", "initialDeadline", "currentDeadline",
-            "authorId", "assigneeId", "createdAt", "updatedAt"
-          ) VALUES (
-            $1, $2::"TicketType", 'NEW'::"TicketStatus", $3::"Priority", $4,
-            $5, $6, $7,
-            $8, $9, NOW(), NOW()
-          ) RETURNING *;`,
-          id,
-          data.type,
-          data.priority,
-          data.description,
-          data.equipmentId,
+      if (data.assigneeId) {
+        auditCreate.push({
+          authorId: data.authorId,
+          action: "ASSIGNED",
+          fieldName: "assigneeId",
+          oldValue: null,
+          newValue: data.assigneeId,
+          comment: "Первоначальное назначение исполнителя",
+        });
+      }
+
+      const created = await this.db.ticket.create({
+        data: {
+          type: data.type,
+          priority: data.priority,
+          description: data.description,
+          equipmentId: data.equipmentId,
+          authorId: data.authorId,
+          assigneeId: data.assigneeId ?? null,
           initialDeadline,
-          initialDeadline,
-          data.authorId,
-          data.assigneeId ?? null,
-        );
-
-        await tx.$executeRawUnsafe(
-          `INSERT INTO "TicketAuditLog" (
-            "id", "ticketId", "authorId", "action", "comment", "createdAt"
-          ) VALUES (
-            $1, $2, $3, 'CREATED'::"AuditAction", $4, NOW()
-          );`,
-          auditId,
-          id,
-          data.authorId,
-          "Заявка создана",
-        );
-
-        if (data.assigneeId) {
-          await tx.$executeRawUnsafe(
-            `INSERT INTO "TicketAuditLog" (
-              "id", "ticketId", "authorId", "action", "fieldName", "oldValue", "newValue", "comment", "createdAt"
-            ) VALUES (
-              $1, $2, $3, 'ASSIGNED'::"AuditAction", 'assigneeId', NULL, $4, $5, NOW()
-            );`,
-            randomUUID(),
-            id,
-            data.authorId,
-            data.assigneeId,
-            "Первоначальное назначение исполнителя",
-          );
-        }
-
-        const auditRows = await tx.$queryRawUnsafe<DbAuditRow[]>(
-          `SELECT * FROM "TicketAuditLog" WHERE "ticketId" = $1 ORDER BY "createdAt" ASC;`,
-          id,
-        );
-
-        return this.mapToTicketWithDetails(inserted[0]!, auditRows);
+          currentDeadline: initialDeadline,
+          auditLogs: {
+            create: auditCreate,
+          },
+        },
+        include: {
+          auditLogs: {
+            orderBy: { createdAt: "asc" },
+          },
+        },
       });
+
+      return this.mapPrismaTicket(created);
     }
 
     const now = new Date().toISOString();
@@ -278,16 +240,16 @@ export class RequestsRepository implements IRequestsRepository {
 
   async findById(id: string): Promise<TicketWithDetails | null> {
     if (this.db) {
-      const rows = await this.db.$queryRawUnsafe<DbTicketRow[]>(
-        `SELECT * FROM "Ticket" WHERE "id" = $1;`,
-        id,
-      );
-      if (!rows || rows.length === 0) return null;
-      const auditRows = await this.db.$queryRawUnsafe<DbAuditRow[]>(
-        `SELECT * FROM "TicketAuditLog" WHERE "ticketId" = $1 ORDER BY "createdAt" ASC;`,
-        id,
-      );
-      return this.mapToTicketWithDetails(rows[0]!, auditRows);
+      const ticket = await this.db.ticket.findUnique({
+        where: { id },
+        include: {
+          auditLogs: {
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      });
+      if (!ticket) return null;
+      return this.mapPrismaTicket(ticket);
     }
 
     const ticket = this.inMemoryTickets.get(id);
@@ -302,39 +264,40 @@ export class RequestsRepository implements IRequestsRepository {
 
   async findMany(filters?: TicketFilters): Promise<TicketWithDetails[]> {
     if (this.db) {
-      let query = `SELECT * FROM "Ticket" WHERE 1=1`;
-      const params: unknown[] = [];
+      const where: {
+        status?: TicketStatus;
+        type?: TicketType;
+        assigneeId?: string;
+        AND?: Array<Record<string, unknown>>;
+      } = {};
 
-      if (filters?.status !== undefined) {
-        params.push(filters.status);
-        query += ` AND "status" = $${params.length}::"TicketStatus"`;
-      }
-      if (filters?.type !== undefined) {
-        params.push(filters.type);
-        query += ` AND "type" = $${params.length}::"TicketType"`;
-      }
-      if (filters?.assigneeId !== undefined) {
-        params.push(filters.assigneeId);
-        query += ` AND "assigneeId" = $${params.length}`;
-      }
+      if (filters?.status !== undefined) where.status = filters.status;
+      if (filters?.type !== undefined) where.type = filters.type;
+      if (filters?.assigneeId !== undefined) where.assigneeId = filters.assigneeId;
       if (filters?.isOverdue === true) {
-        query += ` AND "status" != 'COMPLETED'::"TicketStatus" AND "currentDeadline" < NOW()`;
+        where.AND = [
+          { status: { not: "COMPLETED" as const } },
+          { currentDeadline: { lt: new Date() } },
+        ];
       } else if (filters?.isOverdue === false) {
-        query += ` AND ("status" = 'COMPLETED'::"TicketStatus" OR "currentDeadline" >= NOW())`;
+        where.AND = [
+          {
+            OR: [{ status: "COMPLETED" as const }, { currentDeadline: { gte: new Date() } }],
+          },
+        ];
       }
 
-      query += ` ORDER BY "ticketNumber" ASC`;
+      const tickets = await this.db.ticket.findMany({
+        where,
+        orderBy: { ticketNumber: "asc" },
+        include: {
+          auditLogs: {
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      });
 
-      const rows = await this.db.$queryRawUnsafe<DbTicketRow[]>(query, ...params);
-      const result: TicketWithDetails[] = [];
-      for (const row of rows) {
-        const auditRows = await this.db.$queryRawUnsafe<DbAuditRow[]>(
-          `SELECT * FROM "TicketAuditLog" WHERE "ticketId" = $1 ORDER BY "createdAt" ASC;`,
-          row.id,
-        );
-        result.push(this.mapToTicketWithDetails(row, auditRows));
-      }
-      return result;
+      return tickets.map((t) => this.mapPrismaTicket(t));
     }
 
     let tickets = Array.from(this.inMemoryTickets.values());
@@ -369,79 +332,65 @@ export class RequestsRepository implements IRequestsRepository {
 
     if (this.db) {
       return this.db.$transaction(async (tx) => {
-        const existingRows = await tx.$queryRawUnsafe<DbTicketRow[]>(
-          `SELECT * FROM "Ticket" WHERE "id" = $1 FOR UPDATE;`,
-          id,
-        );
-        if (!existingRows || existingRows.length === 0) return null;
-        const existing = existingRows[0]!;
+        const existing = await tx.ticket.findUnique({ where: { id } });
+        if (!existing) return null;
 
-        const setClauses: string[] = ['"updatedAt" = NOW()'];
-        const params: unknown[] = [id];
+        const updateData: {
+          status?: TicketStatus;
+          type?: TicketType;
+          priority?: Priority;
+          assigneeId?: string | null;
+          currentDeadline?: Date;
+          completionComment?: string | null;
+          completedAt?: Date | null;
+          auditLogs: {
+            create: Array<{
+              authorId: string;
+              action: AuditAction;
+              fieldName?: string | null;
+              oldValue?: string | null;
+              newValue?: string | null;
+              comment?: string | null;
+            }>;
+          };
+        } = {
+          auditLogs: {
+            create: entries.map((entry) => ({
+              authorId: entry.authorId ?? existing.authorId,
+              action: entry.action === "TYPE_CHANGED" ? "COMMENT_ADDED" : entry.action,
+              fieldName: entry.fieldName ?? null,
+              oldValue: entry.oldValue ? String(entry.oldValue) : null,
+              newValue: entry.newValue ? String(entry.newValue) : null,
+              comment: entry.comment ?? null,
+            })),
+          },
+        };
 
-        if (updates.status !== undefined) {
-          params.push(updates.status);
-          setClauses.push(`"status" = $${params.length}::"TicketStatus"`);
-        }
-        if (updates.type !== undefined) {
-          params.push(updates.type);
-          setClauses.push(`"type" = $${params.length}::"TicketType"`);
-        }
-        if (updates.priority !== undefined) {
-          params.push(updates.priority);
-          setClauses.push(`"priority" = $${params.length}::"Priority"`);
-        }
-        if (updates.assigneeId !== undefined) {
-          params.push(updates.assigneeId);
-          setClauses.push(`"assigneeId" = $${params.length}`);
-        }
-        if (updates.currentDeadline !== undefined) {
-          params.push(updates.currentDeadline ? new Date(updates.currentDeadline) : null);
-          setClauses.push(`"currentDeadline" = $${params.length}`);
+        if (updates.status !== undefined) updateData.status = updates.status;
+        if (updates.type !== undefined) updateData.type = updates.type;
+        if (updates.priority !== undefined) updateData.priority = updates.priority;
+        if (updates.assigneeId !== undefined) updateData.assigneeId = updates.assigneeId;
+        if (updates.currentDeadline) {
+          updateData.currentDeadline = new Date(updates.currentDeadline);
         }
         if (updates.completionComment !== undefined) {
-          params.push(updates.completionComment);
-          setClauses.push(`"completionComment" = $${params.length}`);
+          updateData.completionComment = updates.completionComment;
         }
         if (updates.completedAt !== undefined) {
-          params.push(updates.completedAt ? new Date(updates.completedAt) : null);
-          setClauses.push(`"completedAt" = $${params.length}`);
+          updateData.completedAt = updates.completedAt ? new Date(updates.completedAt) : null;
         }
 
-        await tx.$executeRawUnsafe(
-          `UPDATE "Ticket" SET ${setClauses.join(", ")} WHERE "id" = $1;`,
-          ...params,
-        );
+        const updated = await tx.ticket.update({
+          where: { id },
+          data: updateData,
+          include: {
+            auditLogs: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
 
-        for (const entry of entries) {
-          const action = entry.action === "TYPE_CHANGED" ? "COMMENT_ADDED" : entry.action;
-          await tx.$executeRawUnsafe(
-            `INSERT INTO "TicketAuditLog" (
-              "id", "ticketId", "authorId", "action", "fieldName", "oldValue", "newValue", "comment", "createdAt"
-            ) VALUES (
-              $1, $2, $3, $4::"AuditAction", $5, $6, $7, $8, NOW()
-            );`,
-            randomUUID(),
-            id,
-            entry.authorId ?? existing.authorId,
-            action,
-            entry.fieldName ?? null,
-            entry.oldValue ? String(entry.oldValue) : null,
-            entry.newValue ? String(entry.newValue) : null,
-            entry.comment ?? null,
-          );
-        }
-
-        const updatedRows = await tx.$queryRawUnsafe<DbTicketRow[]>(
-          `SELECT * FROM "Ticket" WHERE "id" = $1;`,
-          id,
-        );
-        const auditRows = await tx.$queryRawUnsafe<DbAuditRow[]>(
-          `SELECT * FROM "TicketAuditLog" WHERE "ticketId" = $1 ORDER BY "createdAt" ASC;`,
-          id,
-        );
-
-        return this.mapToTicketWithDetails(updatedRows[0]!, auditRows);
+        return this.mapPrismaTicket(updated);
       });
     }
 
@@ -486,16 +435,20 @@ export class RequestsRepository implements IRequestsRepository {
 
   async getWorkload(): Promise<Array<{ engineerId: string; activeTicketsCount: number }>> {
     if (this.db) {
-      const rows = await this.db.$queryRawUnsafe<DbWorkloadRow[]>(
-        `SELECT "assigneeId", COUNT(*)::int AS count
-         FROM "Ticket"
-         WHERE "status" != 'COMPLETED'::"TicketStatus" AND "assigneeId" IS NOT NULL
-         GROUP BY "assigneeId";`,
-      );
+      const grouped = await this.db.ticket.groupBy({
+        by: ["assigneeId"],
+        where: {
+          status: { not: "COMPLETED" },
+          assigneeId: { not: null },
+        },
+        _count: {
+          _all: true,
+        },
+      });
 
-      return rows.map((r) => ({
-        engineerId: r.assigneeId,
-        activeTicketsCount: Number(r.count),
+      return grouped.map((g) => ({
+        engineerId: g.assigneeId!,
+        activeTicketsCount: g._count._all,
       }));
     }
 

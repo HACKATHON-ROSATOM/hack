@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import type { Database } from "../../database.ts";
 import { ApiError } from "../../http/problem.ts";
-import { verifyToken } from "./auth.ts";
+import type { AuthService } from "../auth/service.ts";
 import type { IRequestsRepository } from "./repository.ts";
 import type { Priority, TicketStatus, TicketWithDetails, UserRole } from "./types.ts";
 
@@ -40,22 +40,19 @@ export interface CreateTicketServiceInput {
 export class RequestsService {
   private repo: IRequestsRepository;
   private db?: Database | undefined;
+  private auth?: AuthService | undefined;
 
-  constructor(repo: IRequestsRepository, db?: Database) {
+  constructor(repo: IRequestsRepository, db?: Database, auth?: AuthService) {
     this.repo = repo;
     this.db = db;
+    this.auth = auth;
   }
 
   getCaller(req: Request): CallerContext {
-    const authHeader = req.headers.authorization;
-    if (authHeader?.startsWith("Bearer ")) {
-      const token = authHeader.slice(7).trim();
-      const verified = verifyToken(token);
-      if (verified) {
-        return { userId: verified.userId, role: verified.role };
-      }
+    const user = this.auth?.authenticate(req.headers.authorization);
+    if (user) {
+      return { userId: user.id, role: user.role };
     }
-
     return { userId: null, role: "ANONYMOUS" };
   }
 
@@ -102,7 +99,10 @@ export class RequestsService {
     });
   }
 
-  async getTicket(id: string): Promise<TicketWithDetails> {
+  async getTicket(id: string, caller?: CallerContext): Promise<TicketWithDetails> {
+    if (caller) {
+      this.assertRole(caller, ["DUTY", "ENGINEER", "DIRECTOR"], "Просмотр карточки заявки");
+    }
     const ticket = await this.repo.findById(id);
     if (!ticket) {
       throw new ApiError(404, `Заявка с идентификатором '${id}' не найдена.`);
@@ -110,12 +110,16 @@ export class RequestsService {
     return ticket;
   }
 
-  async listTickets(filters: {
-    status?: TicketStatus | undefined;
-    type?: "INSPECTION" | "REPAIR" | undefined;
-    assigneeId?: string | undefined;
-    isOverdue?: boolean | undefined;
-  }): Promise<TicketWithDetails[]> {
+  async listTickets(
+    filters: {
+      status?: TicketStatus | undefined;
+      type?: "INSPECTION" | "REPAIR" | undefined;
+      assigneeId?: string | undefined;
+      isOverdue?: boolean | undefined;
+    },
+    caller: CallerContext,
+  ): Promise<TicketWithDetails[]> {
+    this.assertRole(caller, ["DUTY", "ENGINEER", "DIRECTOR"], "Просмотр списка заявок");
     return this.repo.findMany(filters);
   }
 
@@ -301,11 +305,15 @@ export class RequestsService {
     return updated;
   }
 
-  async getOverdueTickets(): Promise<TicketWithDetails[]> {
+  async getOverdueTickets(caller: CallerContext): Promise<TicketWithDetails[]> {
+    this.assertRole(caller, ["DUTY", "ENGINEER", "DIRECTOR"], "Просмотр просроченных заявок");
     return this.repo.getOverdue();
   }
 
-  async getWorkload(): Promise<Array<{ engineerId: string; activeTicketsCount: number }>> {
+  async getWorkload(
+    caller: CallerContext,
+  ): Promise<Array<{ engineerId: string; activeTicketsCount: number }>> {
+    this.assertRole(caller, ["DUTY", "ENGINEER", "DIRECTOR"], "Просмотр распределения нагрузки");
     return this.repo.getWorkload();
   }
 }

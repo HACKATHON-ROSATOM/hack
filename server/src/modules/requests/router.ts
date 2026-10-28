@@ -1,15 +1,14 @@
+import type { ErrorRequestHandler } from "express";
 import { z } from "zod";
 import type { Database } from "../../database.ts";
 import { createApiModule, problemResponse, type ApiModule } from "../../http/openapi.ts";
 import { ApiError } from "../../http/problem.ts";
-import { authenticate, findUserById } from "./auth.ts";
+import type { AuthService } from "../auth/service.ts";
 import { RequestsRepository } from "./repository.ts";
 import {
   assignRequestSchema,
   convertTypeRequestSchema,
   createRequestSchema,
-  loginResponseSchema,
-  loginSchema,
   noQuerySchema,
   requestListQuerySchema,
   requestParamsSchema,
@@ -18,99 +17,20 @@ import {
   ticketListResponseSchema,
   ticketResponseSchema,
   transitionRequestSchema,
-  userProfileSchema,
   workloadListResponseSchema,
 } from "./schemas.ts";
-import type { ErrorRequestHandler } from "express";
 import { ForbiddenError, RequestsService, UnauthorizedError } from "./service.ts";
 
 const basePath = "/api/requests";
 
-export function createRequestsModule(db?: Database, customService?: RequestsService): ApiModule {
+export function createRequestsModule(
+  db?: Database,
+  auth?: AuthService,
+  customService?: RequestsService,
+): ApiModule {
   const module = createApiModule();
   const repository = new RequestsRepository(db);
-  const service = customService ?? new RequestsService(repository, db);
-
-  module.register(
-    {
-      method: "post",
-      path: "/api/auth/login",
-      operationId: "loginUser",
-      summary: "Авторизация пользователя (дежурный, инженер, директор)",
-      description: "Проверяет логин и пароль и выдаёт Bearer токен.",
-      request: {
-        query: noQuerySchema,
-        body: {
-          required: true,
-          content: {
-            "application/json": { schema: loginSchema },
-          },
-        },
-      },
-      responses: {
-        200: {
-          description: "Успешная авторизация.",
-          content: { "application/json": { schema: loginResponseSchema } },
-        },
-        400: problemResponse("Неверные учётные данные или формат запроса."),
-        500: problemResponse("Внутренняя ошибка сервера."),
-      },
-    },
-    async (req, res) => {
-      if (!req.is("application/json")) {
-        throw new ApiError(415, "Expected application/json content-type.");
-      }
-      if (!noQuerySchema.safeParse(req.query).success) {
-        throw new ApiError(400, "Query parameters are not supported for login.");
-      }
-      const body = loginSchema.safeParse(req.body);
-      if (!body.success) {
-        throw new ApiError(400, "Validation failed: invalid username or password.");
-      }
-
-      const result = authenticate(body.data.username, body.data.password);
-      if (!result) {
-        throw new ApiError(400, "Неверный логин или пароль.");
-      }
-      res.json(result);
-    },
-  );
-
-  module.register(
-    {
-      method: "get",
-      path: "/api/auth/me",
-      operationId: "getCurrentUser",
-      summary: "Получить профиль текущего пользователя",
-      description: "Возвращает информацию о пользователе из Bearer токена.",
-      request: {
-        query: noQuerySchema,
-      },
-      responses: {
-        200: {
-          description: "Данные текущего пользователя.",
-          content: { "application/json": { schema: userProfileSchema } },
-        },
-        400: problemResponse("Неподдерживаемые query параметры."),
-        401: problemResponse("Токен отсутствует или недействителен."),
-        500: problemResponse("Внутренняя ошибка сервера."),
-      },
-    },
-    async (req, res) => {
-      if (!noQuerySchema.safeParse(req.query).success) {
-        throw new ApiError(400, "Query parameters are not supported.");
-      }
-      const caller = service.getCaller(req);
-      if (!caller.userId || caller.role === "ANONYMOUS") {
-        throw new UnauthorizedError("Недействительный или отсутствующий токен авторизации.");
-      }
-      const profile = findUserById(caller.userId);
-      if (!profile) {
-        throw new UnauthorizedError("Пользователь не найден.");
-      }
-      res.json(profile);
-    },
-  );
+  const service = customService ?? new RequestsService(repository, db, auth);
 
   module.register(
     {
@@ -119,7 +39,7 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
       operationId: "createRequest",
       summary: "Создать ручную заявку на осмотр или ремонт",
       description:
-        "Создание новой заявки. Доступно для Дежурного (DUTY). Проверяется тип, описание и первоначальный срок.",
+        "Создание новой заявки. Доступно для Дежурного (DUTY) или Директора (DIRECTOR). Требуется указание оборудования и срока.",
       request: {
         query: noQuerySchema,
         body: {
@@ -141,7 +61,8 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           content: { "application/json": { schema: ticketResponseSchema } },
         },
         400: problemResponse("Невалидный формат тела запроса или параметров."),
-        403: problemResponse("Запрещено для текущей роли (требуется DUTY)."),
+        401: problemResponse("Требуется авторизация."),
+        403: problemResponse("Запрещено для текущей роли (требуется DUTY или DIRECTOR)."),
         500: problemResponse("Внутренняя ошибка сервера."),
       },
     },
@@ -184,6 +105,7 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           content: { "application/json": { schema: ticketListResponseSchema } },
         },
         400: problemResponse("Некорректные параметры фильтрации."),
+        401: problemResponse("Требуется авторизация."),
         500: problemResponse("Внутренняя ошибка сервера."),
       },
     },
@@ -200,7 +122,8 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
         isOverdue: query.data.isOverdue !== undefined ? query.data.isOverdue === "true" : undefined,
       };
 
-      const tickets = await service.listTickets(filters);
+      const caller = service.getCaller(req);
+      const tickets = await service.listTickets(filters, caller);
       const summaries = tickets.map(({ auditLogs: _unused, ...summary }) => summary);
       res.json({ items: summaries });
     },
@@ -222,11 +145,13 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           description: "Список просроченных заявок.",
           content: { "application/json": { schema: ticketListResponseSchema } },
         },
+        401: problemResponse("Требуется авторизация."),
         500: problemResponse("Внутренняя ошибка сервера."),
       },
     },
-    async (_req, res) => {
-      const tickets = await service.getOverdueTickets();
+    async (req, res) => {
+      const caller = service.getCaller(req);
+      const tickets = await service.getOverdueTickets(caller);
       const summaries = tickets.map(({ auditLogs: _unused, ...summary }) => summary);
       res.json({ items: summaries });
     },
@@ -248,11 +173,13 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           description: "Нагрузка инженеров.",
           content: { "application/json": { schema: workloadListResponseSchema } },
         },
+        401: problemResponse("Требуется авторизация."),
         500: problemResponse("Внутренняя ошибка сервера."),
       },
     },
-    async (_req, res) => {
-      const workload = await service.getWorkload();
+    async (req, res) => {
+      const caller = service.getCaller(req);
+      const workload = await service.getWorkload(caller);
       res.json({ items: workload });
     },
   );
@@ -275,6 +202,7 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           content: { "application/json": { schema: ticketDetailResponseSchema } },
         },
         400: problemResponse("Некорректный UUID заявки."),
+        401: problemResponse("Требуется авторизация."),
         404: problemResponse("Заявка не найдена."),
         500: problemResponse("Внутренняя ошибка сервера."),
       },
@@ -282,7 +210,8 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
     async (req, res) => {
       const params = requestParamsSchema.safeParse(req.params);
       if (!params.success) throw new ApiError(400, "Invalid ticket UUID.");
-      const ticket = await service.getTicket(params.data.id);
+      const caller = service.getCaller(req);
+      const ticket = await service.getTicket(params.data.id, caller);
       res.json(ticket);
     },
   );
@@ -308,6 +237,7 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           content: { "application/json": { schema: ticketDetailResponseSchema } },
         },
         400: problemResponse("Невалидные данные."),
+        401: problemResponse("Требуется авторизация."),
         403: problemResponse("Запрещено для текущей роли."),
         404: problemResponse("Заявка не найдена."),
         500: problemResponse("Внутренняя ошибка сервера."),
@@ -337,7 +267,7 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
       path: `${basePath}/{id}/schedule`,
       operationId: "updateRequestSchedule",
       summary: "Изменить плановый срок или приоритет",
-      description: "Изменение срока выполнения и приоритета (Технический директор).",
+      description: "Изменение срока выполнения и приоритета (Технический директор или Дежурный).",
       request: {
         params: requestParamsSchema,
         query: noQuerySchema,
@@ -352,6 +282,7 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           content: { "application/json": { schema: ticketDetailResponseSchema } },
         },
         400: problemResponse("Невалидные данные."),
+        401: problemResponse("Требуется авторизация."),
         403: problemResponse("Запрещено для текущей роли."),
         404: problemResponse("Заявка не найдена."),
         500: problemResponse("Внутренняя ошибка сервера."),
@@ -392,7 +323,8 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           content: { "application/json": { schema: ticketDetailResponseSchema } },
         },
         400: problemResponse("Недопустимый переход или пустой комментарий при закрытии."),
-        403: problemResponse("Запрещено для текущей роли (требуется ENGINEER)."),
+        401: problemResponse("Требуется авторизация."),
+        403: problemResponse("Запрещено для текущей роли."),
         404: problemResponse("Заявка не найдена."),
         500: problemResponse("Внутренняя ошибка сервера."),
       },
@@ -436,6 +368,7 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
           content: { "application/json": { schema: ticketDetailResponseSchema } },
         },
         400: problemResponse("Невозможно перевести в ремонт."),
+        401: problemResponse("Требуется авторизация."),
         403: problemResponse("Запрещено для текущей роли (требуется ENGINEER)."),
         404: problemResponse("Заявка не найдена."),
         500: problemResponse("Внутренняя ошибка сервера."),
