@@ -665,13 +665,18 @@ try {
       equipmentId: realEquipment.id,
       description: "Контрольная просроченная заявка",
       priority: "CRITICAL",
-      initialDeadline: pastDeadline,
+      initialDeadline: new Date(Date.now() + 3600000).toISOString(),
       assigneeId: engineerAuth.user.id,
     }),
   });
   assert.equal(overdueCreateRes.status, 201);
   const overdueTicket = ticketResponseSchema.parse(await overdueCreateRes.json());
   createdTicketIds.push(overdueTicket.id);
+  // Simulate the passage of time without waiting an hour.
+  await db.ticket.update({
+    where: { id: overdueTicket.id },
+    data: { currentDeadline: new Date(pastDeadline) },
+  });
 
   const overdueAnalyticsRes = await fetch(`${base}/api/requests/analytics/overdue`, {
     headers: dutyHeaders,

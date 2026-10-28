@@ -20,7 +20,7 @@ services:
       initialize:
         condition: service_completed_successfully
     volumes:
-      - ./server/src:/app/server/src:ro
+      - ./server/src:/app/server/src
       - prisma_client:/app/server/src/generated/prisma
       - ./server/views:/app/server/views:ro
       - ./server/public:/app/server/public:ro
