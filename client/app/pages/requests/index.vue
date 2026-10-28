@@ -1,7 +1,8 @@
 <script setup>
 import { useUserStore } from '~/stores/user'
 import RequestsTable from '~/components/requests/RequestsTable.vue'
-import { typeLabels, statusLabels, priorityLabels, formatDate, errorMessage, loadEquipment } from '~/components/requests/requestUtils'
+import { typeLabels, statusLabels, priorityLabels, formatDate, loadEquipment } from '~/components/requests/requestUtils'
+import { apiProblem } from '~/utils/apiProblem'
 
 const userStore = useUserStore()
 const search = ref('')
@@ -19,7 +20,6 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    await userStore.restore()
     const [result, objects, people] = await Promise.all([
       userStore.api('/api/requests'), loadEquipment(userStore), userStore.api('/api/engineers'),
     ])
@@ -27,7 +27,7 @@ async function load() {
     equipment.value = objects
     engineers.value = people.items
   } catch (err) {
-    error.value = errorMessage(err)
+    error.value = apiProblem(err).detail
   } finally {
     loading.value = false
   }
@@ -62,9 +62,9 @@ const filteredRequests = computed(() => requests.value.map((request) => {
     </div>
     <UCard class="bg-white ring-1 ring-brand/15">
       <div class="flex flex-wrap gap-3">
-        <UInput v-model="search" icon="i-lucide-search" placeholder="Поиск по заявкам" aria-label="Поиск по заявкам" class="w-64" />
-        <USelect v-model="kind" :items="kindOptions" value-key="value" aria-label="Тип заявки" class="w-44" />
-        <USelect v-model="status" :items="statusOptions" value-key="value" aria-label="Статус заявки" class="w-44" />
+        <UInput v-model="search" icon="i-lucide-search" placeholder="Поиск по заявкам" class="w-64" />
+        <USelect v-model="kind" :items="kindOptions" value-key="value" class="w-44" />
+        <USelect v-model="status" :items="statusOptions" value-key="value" class="w-44" />
       </div>
     </UCard>
     <UCard class="bg-white ring-1 ring-brand/15">

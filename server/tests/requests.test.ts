@@ -70,6 +70,9 @@ const mockAuth: AuthService = {
   async login() {
     return null;
   },
+  logout() {
+    return false;
+  },
   authenticate(authorization?: string) {
     if (!authorization) return null;
     const match = /^Bearer (.+)$/i.exec(authorization.trim());

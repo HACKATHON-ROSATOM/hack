@@ -13,10 +13,6 @@ export function inputDate(value) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 
-export function errorMessage(error) {
-  return error?.data?.detail || error?.message || 'Не удалось выполнить запрос. Попробуйте ещё раз.'
-}
-
 export async function loadEquipment(store) {
   const first = await store.api('/api/equipment?page=1&pageSize=100')
   const items = [...first.items]

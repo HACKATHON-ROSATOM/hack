@@ -18,7 +18,7 @@ const roleLabels = {
 }
 
 async function logout() {
-  userStore.logout()
+  await userStore.logout()
   await navigateTo('/login')
 }
 
@@ -30,7 +30,7 @@ const isActive = (href) =>
 
 <template>
   <header class="flex flex-wrap items-center justify-between gap-3 border-b border-brand/15 bg-white px-4 py-3">
-    <nav class="flex w-full items-center gap-4 overflow-x-auto sm:w-auto sm:gap-6" aria-label="Основная навигация">
+    <nav class="flex w-full items-center gap-4 overflow-x-auto sm:w-auto sm:gap-6">
       <NuxtLink
         v-for="link in links"
         :key="link.href"
@@ -43,10 +43,7 @@ const isActive = (href) =>
     </nav>
 
     <div v-if="userStore.user" class="flex w-full items-center justify-between gap-4 sm:w-auto">
-      <div class="text-left sm:text-right">
-        <p class="font-medium text-gray-900">{{ userStore.user.name }}</p>
-        <p class="text-sm text-gray-500">{{ roleLabels[userStore.role] }}</p>
-      </div>
+      <p class="font-medium text-gray-900">{{ roleLabels[userStore.role] }}</p>
       <UButton color="neutral" variant="outline" @click="logout">Выйти</UButton>
     </div>
   </header>
