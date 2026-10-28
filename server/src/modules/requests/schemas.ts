@@ -45,7 +45,7 @@ export const createRequestSchema = z
     initialDeadline: z
       .string()
       .datetime()
-      .meta({ description: "Первоначальный плановый срок в формате ISO 8601" }),
+      .meta({ description: "Первоначальный плановый срок в будущем в формате ISO 8601" }),
     assigneeId: z
       .string()
       .uuid()

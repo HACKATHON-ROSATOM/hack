@@ -161,7 +161,7 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "No token",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     await expectProblem(postRes, 401, "/api/requests");
@@ -189,7 +189,11 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
   it.for([
     [
       "missing type",
-      { equipmentId: randomUUID(), description: "Test", initialDeadline: new Date().toISOString() },
+      {
+        equipmentId: randomUUID(),
+        description: "Test",
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
+      },
     ],
     [
       "invalid type",
@@ -197,7 +201,7 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
         type: "UNKNOWN",
         equipmentId: randomUUID(),
         description: "Test",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       },
     ],
     [
@@ -206,7 +210,7 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
         type: "INSPECTION",
         equipmentId: "not-a-uuid",
         description: "Test",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       },
     ],
     [
@@ -215,7 +219,7 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       },
     ],
     [
@@ -237,7 +241,7 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Test",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
         priority: "URGENT",
       },
     ],
@@ -247,7 +251,7 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Test",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
         unexpectedProperty: true,
       },
     ],
@@ -270,7 +274,7 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Routine check",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     await expectProblem(response, 400, "/api/requests");
@@ -300,7 +304,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Anonymous check",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     await expectProblem(response, 401, "/api/requests");
@@ -319,7 +323,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Spoof check",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     await expectProblem(response, 401, "/api/requests");
@@ -334,7 +338,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Engineer cannot create initial ticket",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     await expectProblem(response, 403, "/api/requests");
@@ -350,7 +354,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId,
         description: "Плановый осмотр ветрогенератора ВЭУ-01",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     expect(response.status).toBe(201);
@@ -367,7 +371,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         equipmentId,
         description: "Срочный ремонт лопасти по распоряжению руководства",
         priority: "CRITICAL",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     expect(response.status).toBe(201);
@@ -382,7 +386,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Назначение несуществующего пользователя",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
         assigneeId: randomUUID(),
       }),
     });
@@ -398,7 +402,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Назначение директора исполнителем",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
         assigneeId: DEMO_USERS.director.id,
       }),
     });
@@ -411,7 +415,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Назначение дежурного исполнителем",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
         assigneeId: DEMO_USERS.duty.id,
       }),
     });
@@ -427,7 +431,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Тест валидации переназначения",
-        initialDeadline: new Date().toISOString(),
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     const ticket = ticketResponseSchema.parse(await createRes.json());
@@ -849,6 +853,26 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     await expectProblem(engineerScheduleRes, 403, `/api/requests/${ticket.id}/schedule`);
   });
 
+  it("rejects creation with a past deadline without saving a ticket", async (t) => {
+    const { base } = await serveRequests(t);
+    for (const headers of [dutyHeaders, directorHeaders]) {
+      const response = await fetch(`${base}/api/requests`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          type: "INSPECTION",
+          equipmentId: randomUUID(),
+          description: "Осмотр оборудования",
+          initialDeadline: new Date(Date.now() - 86400000).toISOString(),
+        }),
+      });
+      await expectProblem(response, 400, "/api/requests");
+    }
+
+    const list = await fetch(`${base}/api/requests`, { headers: dutyHeaders });
+    expect(ticketListResponseSchema.parse(await list.json()).items).toHaveLength(0);
+  });
+
   it("provides analytics for overdue tickets and engineer workload", async (t) => {
     const { base } = await serveRequests(t);
     const engineerA = DEMO_USERS.engineer.id;
@@ -862,11 +886,16 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Просроченный осмотр",
-        initialDeadline: yesterday,
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
         assigneeId: engineerA,
       }),
     });
     const overdueTicket = ticketResponseSchema.parse(await overdueRes.json());
+    await fetch(`${base}/api/requests/${overdueTicket.id}/schedule`, {
+      method: "PATCH",
+      headers: dutyHeaders,
+      body: JSON.stringify({ currentDeadline: yesterday }),
+    });
 
     await fetch(`${base}/api/requests`, {
       method: "POST",

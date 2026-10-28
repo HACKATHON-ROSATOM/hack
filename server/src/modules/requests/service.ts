@@ -118,6 +118,10 @@ export class RequestsService {
       throw new UnauthorizedError("Пользователь не идентифицирован.");
     }
 
+    if (new Date(input.initialDeadline).getTime() <= Date.now()) {
+      throw new ApiError(400, "Срок исполнения заявки должен быть в будущем.");
+    }
+
     if (this.db?.equipment) {
       const equipment = await this.db.equipment.findUnique({
         where: { id: input.equipmentId },
