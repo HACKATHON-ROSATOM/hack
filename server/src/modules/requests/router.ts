@@ -2,11 +2,14 @@ import { z } from "zod";
 import type { Database } from "../../database.ts";
 import { createApiModule, problemResponse, type ApiModule } from "../../http/openapi.ts";
 import { ApiError } from "../../http/problem.ts";
+import { authenticate, findUserById } from "./auth.ts";
 import { RequestsRepository } from "./repository.ts";
 import {
   assignRequestSchema,
   convertTypeRequestSchema,
   createRequestSchema,
+  loginResponseSchema,
+  loginSchema,
   noQuerySchema,
   requestListQuerySchema,
   requestParamsSchema,
@@ -15,17 +18,99 @@ import {
   ticketListResponseSchema,
   ticketResponseSchema,
   transitionRequestSchema,
+  userProfileSchema,
   workloadListResponseSchema,
 } from "./schemas.ts";
 import type { ErrorRequestHandler } from "express";
-import { ForbiddenError, RequestsService } from "./service.ts";
+import { ForbiddenError, RequestsService, UnauthorizedError } from "./service.ts";
 
 const basePath = "/api/requests";
 
 export function createRequestsModule(db?: Database, customService?: RequestsService): ApiModule {
   const module = createApiModule();
   const repository = new RequestsRepository(db);
-  const service = customService ?? new RequestsService(repository);
+  const service = customService ?? new RequestsService(repository, db);
+
+  module.register(
+    {
+      method: "post",
+      path: "/api/auth/login",
+      operationId: "loginUser",
+      summary: "Авторизация пользователя (дежурный, инженер, директор)",
+      description: "Проверяет логин и пароль и выдаёт Bearer токен.",
+      request: {
+        query: noQuerySchema,
+        body: {
+          required: true,
+          content: {
+            "application/json": { schema: loginSchema },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: "Успешная авторизация.",
+          content: { "application/json": { schema: loginResponseSchema } },
+        },
+        400: problemResponse("Неверные учётные данные или формат запроса."),
+        500: problemResponse("Внутренняя ошибка сервера."),
+      },
+    },
+    async (req, res) => {
+      if (!req.is("application/json")) {
+        throw new ApiError(415, "Expected application/json content-type.");
+      }
+      if (!noQuerySchema.safeParse(req.query).success) {
+        throw new ApiError(400, "Query parameters are not supported for login.");
+      }
+      const body = loginSchema.safeParse(req.body);
+      if (!body.success) {
+        throw new ApiError(400, "Validation failed: invalid username or password.");
+      }
+
+      const result = authenticate(body.data.username, body.data.password);
+      if (!result) {
+        throw new ApiError(400, "Неверный логин или пароль.");
+      }
+      res.json(result);
+    },
+  );
+
+  module.register(
+    {
+      method: "get",
+      path: "/api/auth/me",
+      operationId: "getCurrentUser",
+      summary: "Получить профиль текущего пользователя",
+      description: "Возвращает информацию о пользователе из Bearer токена.",
+      request: {
+        query: noQuerySchema,
+      },
+      responses: {
+        200: {
+          description: "Данные текущего пользователя.",
+          content: { "application/json": { schema: userProfileSchema } },
+        },
+        400: problemResponse("Неподдерживаемые query параметры."),
+        401: problemResponse("Токен отсутствует или недействителен."),
+        500: problemResponse("Внутренняя ошибка сервера."),
+      },
+    },
+    async (req, res) => {
+      if (!noQuerySchema.safeParse(req.query).success) {
+        throw new ApiError(400, "Query parameters are not supported.");
+      }
+      const caller = service.getCaller(req);
+      if (!caller.userId || caller.role === "ANONYMOUS") {
+        throw new UnauthorizedError("Недействительный или отсутствующий токен авторизации.");
+      }
+      const profile = findUserById(caller.userId);
+      if (!profile) {
+        throw new UnauthorizedError("Пользователь не найден.");
+      }
+      res.json(profile);
+    },
+  );
 
   module.register(
     {
@@ -370,6 +455,19 @@ export function createRequestsModule(db?: Database, customService?: RequestsServ
   );
 
   const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
+    if (error instanceof UnauthorizedError) {
+      res
+        .status(401)
+        .type("application/problem+json")
+        .json({
+          type: "about:blank",
+          title: "Unauthorized",
+          status: 401,
+          detail: error.message,
+          instance: req.originalUrl.split("?")[0],
+        });
+      return;
+    }
     if (error instanceof ForbiddenError) {
       res
         .status(403)

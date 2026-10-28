@@ -1,8 +1,8 @@
 import type { Request } from "express";
-import createError from "http-errors";
+import type { Database } from "../../database.ts";
 import { ApiError } from "../../http/problem.ts";
+import { verifyToken } from "./auth.ts";
 import type { IRequestsRepository } from "./repository.ts";
-import type { CreateTicketData, TicketFilters } from "./repository.ts";
 import type { Priority, TicketStatus, TicketWithDetails, UserRole } from "./types.ts";
 
 export interface CallerContext {
@@ -19,32 +19,50 @@ export class ForbiddenError extends Error {
   }
 }
 
+export class UnauthorizedError extends Error {
+  readonly status = 401;
+
+  constructor(message = "Требуется авторизация.") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+export interface CreateTicketServiceInput {
+  type: "INSPECTION" | "REPAIR";
+  equipmentId: string;
+  description: string;
+  priority: Priority;
+  initialDeadline: string;
+  assigneeId?: string | undefined;
+}
+
 export class RequestsService {
   private repo: IRequestsRepository;
+  private db?: Database | undefined;
 
-  constructor(repo: IRequestsRepository) {
+  constructor(repo: IRequestsRepository, db?: Database) {
     this.repo = repo;
+    this.db = db;
   }
 
-  /**
-   * Извлечение контекста пользователя из запроса.
-   * Поддерживает заголовки X-User-Role и X-User-Id.
-   */
   getCaller(req: Request): CallerContext {
-    const rawRole = req.headers["x-user-role"];
-    const role: UserRole =
-      typeof rawRole === "string" &&
-      ["DUTY", "ENGINEER", "DIRECTOR"].includes(rawRole.toUpperCase())
-        ? (rawRole.toUpperCase() as UserRole)
-        : "ANONYMOUS";
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.slice(7).trim();
+      const verified = verifyToken(token);
+      if (verified) {
+        return { userId: verified.userId, role: verified.role };
+      }
+    }
 
-    const rawId = req.headers["x-user-id"];
-    const userId = typeof rawId === "string" ? rawId : null;
-
-    return { userId, role };
+    return { userId: null, role: "ANONYMOUS" };
   }
 
   assertRole(caller: CallerContext, allowedRoles: UserRole[], actionDescription: string): void {
+    if (caller.role === "ANONYMOUS") {
+      throw new UnauthorizedError("Требуется авторизация для выполнения действия.");
+    }
     if (!allowedRoles.includes(caller.role)) {
       throw new ForbiddenError(
         `Действие '${actionDescription}' запрещено для роли '${caller.role}'. Требуется одна из ролей: ${allowedRoles.join(", ")}.`,
@@ -52,22 +70,36 @@ export class RequestsService {
     }
   }
 
-  async createTicket(input: CreateTicketData, caller: CallerContext): Promise<TicketWithDetails> {
+  async createTicket(
+    input: CreateTicketServiceInput,
+    caller: CallerContext,
+  ): Promise<TicketWithDetails> {
     this.assertRole(caller, ["DUTY", "DIRECTOR"], "Создание заявки");
+    if (!caller.userId) {
+      throw new UnauthorizedError("Пользователь не идентифицирован.");
+    }
 
-    const ticket = await this.repo.create({
+    if (this.db?.equipment) {
+      const equipment = await this.db.equipment.findUnique({
+        where: { id: input.equipmentId },
+      });
+      if (!equipment) {
+        throw new ApiError(
+          400,
+          `Оборудование с идентификатором '${input.equipmentId}' не найдено в реестре.`,
+        );
+      }
+    }
+
+    return this.repo.create({
       type: input.type,
       equipmentId: input.equipmentId,
       description: input.description,
       priority: input.priority,
       initialDeadline: input.initialDeadline,
       assigneeId: input.assigneeId,
-      authorId: caller.userId ?? undefined,
+      authorId: caller.userId,
     });
-
-    const full = await this.repo.findById(ticket.id);
-    if (!full) throw createError(500, "Failed to retrieve created ticket.");
-    return full;
   }
 
   async getTicket(id: string): Promise<TicketWithDetails> {
@@ -78,7 +110,12 @@ export class RequestsService {
     return ticket;
   }
 
-  async listTickets(filters: TicketFilters): Promise<TicketWithDetails[]> {
+  async listTickets(filters: {
+    status?: TicketStatus | undefined;
+    type?: "INSPECTION" | "REPAIR" | undefined;
+    assigneeId?: string | undefined;
+    isOverdue?: boolean | undefined;
+  }): Promise<TicketWithDetails[]> {
     return this.repo.findMany(filters);
   }
 
@@ -129,22 +166,33 @@ export class RequestsService {
     }
 
     const updates: Partial<TicketWithDetails> = {};
+    const auditEntries = [];
+
     if (params.currentDeadline !== undefined) {
       updates.currentDeadline = params.currentDeadline;
+      auditEntries.push({
+        action: "DEADLINE_CHANGED" as const,
+        fieldName: "currentDeadline",
+        oldValue: existing.currentDeadline,
+        newValue: params.currentDeadline,
+        comment: params.comment ?? null,
+        authorId: caller.userId,
+      });
     }
+
     if (params.priority !== undefined) {
       updates.priority = params.priority;
+      auditEntries.push({
+        action: "PRIORITY_CHANGED" as const,
+        fieldName: "priority",
+        oldValue: existing.priority,
+        newValue: params.priority,
+        comment: params.comment ?? null,
+        authorId: caller.userId,
+      });
     }
 
-    const updated = await this.repo.update(ticketId, updates, {
-      action: params.currentDeadline ? "DEADLINE_CHANGED" : "PRIORITY_CHANGED",
-      fieldName: params.currentDeadline ? "currentDeadline" : "priority",
-      oldValue: params.currentDeadline ? existing.currentDeadline : existing.priority,
-      newValue: params.currentDeadline ? params.currentDeadline : (params.priority ?? null),
-      comment: params.comment ?? "Срок или приоритет изменён",
-      authorId: caller.userId,
-    });
-
+    const updated = await this.repo.update(ticketId, updates, auditEntries);
     if (!updated) throw new ApiError(404, "Заявка не найдена.");
     return updated;
   }
