@@ -911,4 +911,124 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(statsA?.activeTicketsCount).toBe(2);
     expect(statsB?.activeTicketsCount).toBe(1);
   });
+
+  it("handles 12 concurrent transition requests on a single ticket with exactly 1 success and 1 audit log", async (t) => {
+    const { base } = await serveRequests(t);
+    const equipmentId = randomUUID();
+
+    const createRes = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId,
+        description: "Тест конкурентных переходов",
+        priority: "HIGH",
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
+        assigneeId: DEMO_USERS.engineer.id,
+      }),
+    });
+    const ticket = ticketResponseSchema.parse(await createRes.json());
+
+    const responses = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        fetch(`${base}/api/requests/${ticket.id}/transitions`, {
+          method: "POST",
+          headers: engineerHeaders,
+          body: JSON.stringify({
+            toStatus: "IN_PROGRESS",
+            comment: "Одновременный выезд на осмотр",
+          }),
+        }),
+      ),
+    );
+
+    const successful = responses.filter((r) => r.status === 200);
+    const rejected = responses.filter((r) => r.status === 400);
+
+    expect(successful.length).toBe(1);
+    expect(rejected.length).toBe(11);
+
+    const detailRes = await fetch(`${base}/api/requests/${ticket.id}`, { headers: dutyHeaders });
+    const detail = ticketDetailResponseSchema.parse(await detailRes.json());
+    expect(detail.status).toBe("IN_PROGRESS");
+
+    const statusLogs = detail.auditLogs.filter(
+      (l) => l.action === "STATUS_CHANGED" && l.newValue === "IN_PROGRESS",
+    );
+    expect(statusLogs.length).toBe(1);
+  });
+
+  it("prevents stale engineer actions when ticket is concurrently reassigned", async (t) => {
+    const { base } = await serveRequests(t);
+    const equipmentId = randomUUID();
+
+    const createRes = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId,
+        description: "Тест конкурентного переназначения",
+        priority: "HIGH",
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
+        assigneeId: DEMO_USERS.engineer.id,
+      }),
+    });
+    const ticket = ticketResponseSchema.parse(await createRes.json());
+
+    await fetch(`${base}/api/requests/${ticket.id}/transitions`, {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({
+        toStatus: "IN_PROGRESS",
+        comment: "Инженер 1 начал работу",
+      }),
+    });
+
+    const [reassignRes, oldEngineerWaitRes] = await Promise.all([
+      fetch(`${base}/api/requests/${ticket.id}/assignment`, {
+        method: "PATCH",
+        headers: dutyHeaders,
+        body: JSON.stringify({
+          assigneeId: DEMO_USERS.engineer2.id,
+          comment: "Срочная передача инженеру 2",
+        }),
+      }),
+      fetch(`${base}/api/requests/${ticket.id}/transitions`, {
+        method: "POST",
+        headers: engineerHeaders,
+        body: JSON.stringify({
+          toStatus: "WAITING_PARTS",
+          comment: "Инженер 1 пытается перевести в ожидание ЗИП",
+        }),
+      }),
+    ]);
+
+    expect(reassignRes.status).toBe(200);
+    expect([200, 403]).toContain(oldEngineerWaitRes.status);
+
+    const postReassignOldEngineerRes = await fetch(
+      `${base}/api/requests/${ticket.id}/transitions`,
+      {
+        method: "POST",
+        headers: engineerHeaders,
+        body: JSON.stringify({
+          toStatus: "COMPLETED",
+          comment: "Инженер 1 пытается закрыть чужую заявку",
+        }),
+      },
+    );
+    await expectProblem(postReassignOldEngineerRes, 403, `/api/requests/${ticket.id}/transitions`);
+
+    const newEngineerRes = await fetch(`${base}/api/requests/${ticket.id}/transitions`, {
+      method: "POST",
+      headers: engineer2Headers,
+      body: JSON.stringify({
+        toStatus: "COMPLETED",
+        comment: "Инженер 2 успешно завершил работу",
+      }),
+    });
+    expect([200, 400]).toContain(newEngineerRes.status);
+  });
 });

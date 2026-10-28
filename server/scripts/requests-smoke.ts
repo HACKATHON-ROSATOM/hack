@@ -333,6 +333,49 @@ try {
     true,
   );
 
+  console.log(
+    "[Smoke] 4.1. Проверка 12 одновременных запросов перехода NEW -> IN_PROGRESS на PostgreSQL...",
+  );
+  const concurrentResponses = await Promise.all(
+    Array.from({ length: 12 }, (_, i) =>
+      fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
+        method: "POST",
+        headers: engineerHeaders,
+        body: JSON.stringify({
+          toStatus: "IN_PROGRESS",
+          comment: `Одновременная попытка начала #${i + 1}`,
+        }),
+      }),
+    ),
+  );
+  const success200 = concurrentResponses.filter((r) => r.status === 200);
+  const rejected400 = concurrentResponses.filter((r) => r.status === 400);
+  assert.equal(
+    success200.length,
+    1,
+    `Ровно один одновременный запрос должен получить 200 (получено: ${success200.length})`,
+  );
+  assert.equal(
+    rejected400.length,
+    11,
+    `Остальные 11 одновременных запросов должны получить 400 (получено: ${rejected400.length})`,
+  );
+
+  const detailAfterConcurrent = ticketDetailResponseSchema.parse(
+    await (
+      await fetch(`${base}/api/requests/${unassignedTicket.id}`, { headers: dutyHeaders })
+    ).json(),
+  );
+  assert.equal(detailAfterConcurrent.status, "IN_PROGRESS");
+  const inProgressAuditLogs = detailAfterConcurrent.auditLogs.filter(
+    (l) => l.action === "STATUS_CHANGED" && l.newValue === "IN_PROGRESS",
+  );
+  assert.equal(
+    inProgressAuditLogs.length,
+    1,
+    `В журнале должна остаться ровно 1 запись перехода в IN_PROGRESS (получено: ${inProgressAuditLogs.length})`,
+  );
+
   const otherEngineerStartRes = await fetch(
     `${base}/api/requests/${unassignedTicket.id}/transitions`,
     {
@@ -367,7 +410,7 @@ try {
   );
 
   console.log(
-    "[Smoke] 5. Изменение срока и приоритета директором, выполнение заявки осмотра инженером...",
+    "[Smoke] 5. Изменение плана директором, конкурентное переназначение и завершение заявки...",
   );
   const newDeadline = new Date(Date.now() + 172800000).toISOString();
   const scheduleUpdateRes = await fetch(`${base}/api/requests/${unassignedTicket.id}/schedule`, {
@@ -384,41 +427,66 @@ try {
   assert.equal(scheduleUpdatedTicket.priority, "CRITICAL");
   assert.equal(scheduleUpdatedTicket.currentDeadline, newDeadline);
 
-  const startRes = await fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
-    method: "POST",
-    headers: engineerHeaders,
-    body: JSON.stringify({
-      toStatus: "IN_PROGRESS",
-      comment: "Инженер прибыл на объект, начало осмотра",
+  const [reassignRes, oldEngineerWaitRes] = await Promise.all([
+    fetch(`${base}/api/requests/${unassignedTicket.id}/assignment`, {
+      method: "PATCH",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        assigneeId: secondEngineerId,
+        comment: "Срочная передача второму инженеру",
+      }),
     }),
-  });
-  assert.equal(startRes.status, 200);
+    fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({
+        toStatus: "WAITING_PARTS",
+        comment: "Прежний инженер пытается сменить статус",
+      }),
+    }),
+  ]);
+  assert.equal(reassignRes.status, 200);
+  assert.ok([200, 403].includes(oldEngineerWaitRes.status));
 
-  const waitPartsRes = await fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
-    method: "POST",
-    headers: engineerHeaders,
-    body: JSON.stringify({
-      toStatus: "WAITING_PARTS",
-      comment: "Требуется сальник и масло, переход в ожидание ЗИП",
-    }),
-  });
-  assert.equal(waitPartsRes.status, 200);
+  const postReassignOldEngineerRes = await fetch(
+    `${base}/api/requests/${unassignedTicket.id}/transitions`,
+    {
+      method: "POST",
+      headers: engineerHeaders,
+      body: JSON.stringify({
+        toStatus: "COMPLETED",
+        comment: "Прежний инженер пытается завершить чужую заявку",
+      }),
+    },
+  );
+  await expectProblem(
+    postReassignOldEngineerRes,
+    403,
+    `/api/requests/${unassignedTicket.id}/transitions`,
+  );
 
-  const resumeRes = await fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
-    method: "POST",
-    headers: engineerHeaders,
-    body: JSON.stringify({
-      toStatus: "IN_PROGRESS",
-      comment: "ЗИП получен, возобновление работы",
-    }),
-  });
-  assert.equal(resumeRes.status, 200);
+  const currentDetail = ticketDetailResponseSchema.parse(
+    await (
+      await fetch(`${base}/api/requests/${unassignedTicket.id}`, { headers: dutyHeaders })
+    ).json(),
+  );
+  if (currentDetail.status === "WAITING_PARTS") {
+    const resumeRes = await fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
+      method: "POST",
+      headers: engineer2Headers,
+      body: JSON.stringify({
+        toStatus: "IN_PROGRESS",
+        comment: "Второй инженер возобновляет работу",
+      }),
+    });
+    assert.equal(resumeRes.status, 200);
+  }
 
   const emptyCommentCloseRes = await fetch(
     `${base}/api/requests/${unassignedTicket.id}/transitions`,
     {
       method: "POST",
-      headers: engineerHeaders,
+      headers: engineer2Headers,
       body: JSON.stringify({
         toStatus: "COMPLETED",
         comment: "    ",
@@ -431,10 +499,10 @@ try {
     `/api/requests/${unassignedTicket.id}/transitions`,
   );
 
-  const inspectionCloseComment = "Осмотр завершен успешно, отклонений в работе не обнаружено";
+  const inspectionCloseComment = "Осмотр завершен успешно назначенным вторым инженером";
   const validCloseRes = await fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
     method: "POST",
-    headers: engineerHeaders,
+    headers: engineer2Headers,
     body: JSON.stringify({
       toStatus: "COMPLETED",
       comment: inspectionCloseComment,
