@@ -160,6 +160,21 @@ export const convertTypeRequestSchema = z
     },
   });
 
+export const attachSnapshotRequestSchema = z.strictObject({
+  turbineNumber: z.number().int().min(1).max(8),
+});
+
+export const telemetrySnapshotSchema = z.strictObject({
+  turbineId: z.string(),
+  turbineNumber: z.number().int(),
+  ca: z.number().int(),
+  ioa: z.number().int(),
+  value: z.number(),
+  status: z.enum(["STOPPED", "READY", "RUNNING", "ALARM", "UNKNOWN"]),
+  receivedAt: z.string().datetime(),
+  fresh: z.boolean(),
+});
+
 export const auditLogItemResponseSchema = z
   .strictObject({
     id: z.string().uuid(),
@@ -182,12 +197,14 @@ export const ticketResponseSchema = z
     source: ticketSourceSchema,
     status: ticketStatusSchema,
     priority: prioritySchema,
-    equipmentId: z.string().uuid(),
+    equipmentId: z.string().uuid().nullable(),
     authorId: z.string().uuid().nullable(),
     assigneeId: z.string().uuid().nullable(),
     description: z.string(),
     initialDeadline: z.string().datetime().nullable(),
     currentDeadline: z.string().datetime().nullable(),
+    telemetryTurbineId: z.string().nullable(),
+    snapshot: telemetrySnapshotSchema.nullable(),
     completionComment: z.string().nullable(),
     isOverdue: z.boolean(),
     createdAt: z.string().datetime(),

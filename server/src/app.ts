@@ -13,18 +13,31 @@ import { createAuthService, type AuthService } from "./modules/auth/service.ts";
 import { createEquipmentModule } from "./modules/equipment/router.ts";
 import { createEngineersModule } from "./modules/engineers/router.ts";
 import { createNotesModule } from "./modules/notes/router.ts";
+import { createMonitoringModule } from "./modules/monitoring/router.ts";
+import { MonitoringService } from "./modules/monitoring/service.ts";
 import { createRequestsModule } from "./modules/requests/router.ts";
+import { RequestsRepository } from "./modules/requests/repository.ts";
+import { RequestsService } from "./modules/requests/service.ts";
 import indexRouter from "./routes/index.ts";
 import usersRouter from "./routes/users.ts";
 
-export function createApp(db: Database, auth: AuthService = createAuthService(db)) {
+export function createApp(
+  db: Database,
+  auth: AuthService = createAuthService(db),
+  monitoring = new MonitoringService(db),
+) {
   const app = express();
+  const requests = new RequestsService(new RequestsRepository(db), db, auth, monitoring);
+  monitoring.subscribeStatus(async (event) => {
+    await requests.processTelemetry(event);
+  });
   const apiModules = [
     createNotesModule(db),
     createEquipmentModule(db),
     createAuthModule(auth),
     createEngineersModule(db, auth),
-    createRequestsModule(db, auth),
+    createMonitoringModule(monitoring, auth),
+    createRequestsModule(db, auth, requests),
   ];
   const openApiDocument = JSON.stringify(generateOpenApi(apiModules));
 
