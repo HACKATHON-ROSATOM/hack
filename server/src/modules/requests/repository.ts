@@ -90,6 +90,7 @@ export class RequestsRepository implements IRequestsRepository {
   private mapPrismaTicket(ticket: {
     id: string;
     ticketNumber: number;
+    version: number;
     type: TicketType;
     status: TicketStatus;
     priority: Priority;
@@ -131,7 +132,7 @@ export class RequestsRepository implements IRequestsRepository {
       completionComment: ticket.completionComment,
       createdAt: ticket.createdAt.toISOString(),
       completedAt: ticket.completedAt ? ticket.completedAt.toISOString() : null,
-      version: 1,
+      version: ticket.version,
       isOverdue,
       auditLogs: (ticket.auditLogs ?? []).map((log) => ({
         id: log.id,
@@ -359,6 +360,7 @@ export class RequestsRepository implements IRequestsRepository {
         if (!existing) return null;
 
         const updateData: {
+          version: { increment: number };
           status?: TicketStatus;
           type?: TicketType;
           priority?: Priority;
@@ -377,6 +379,7 @@ export class RequestsRepository implements IRequestsRepository {
             }>;
           };
         } = {
+          version: { increment: 1 },
           auditLogs: {
             create: entries.map((entry) => ({
               authorId: entry.authorId ?? existing.authorId,
@@ -479,6 +482,7 @@ export class RequestsRepository implements IRequestsRepository {
         const entries = Array.isArray(auditEntries) ? auditEntries : [auditEntries];
 
         const updateData: {
+          version: { increment: number };
           status?: TicketStatus;
           type?: TicketType;
           priority?: Priority;
@@ -497,6 +501,7 @@ export class RequestsRepository implements IRequestsRepository {
             }>;
           };
         } = {
+          version: { increment: 1 },
           auditLogs: {
             create: entries.map((entry) => ({
               authorId: entry.authorId ?? existingRecord.authorId,

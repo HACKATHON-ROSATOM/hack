@@ -21,6 +21,46 @@ function resolveSchema(value: unknown, schemas: Record<string, unknown>) {
 }
 
 describe("generated OpenAPI", () => {
+  it("requires a bearer token for request operations but not public login", async (t) => {
+    const base = await serve(t);
+    const response = await fetch(`${base}/openapi.json`);
+    expect(response.status).toBe(200);
+    const document = z
+      .object({
+        security: z.array(z.unknown()).optional(),
+        components: z.object({ securitySchemes: z.record(z.string(), z.unknown()) }),
+        paths: z.record(z.string(), z.record(z.string(), z.unknown())),
+      })
+      .parse(await response.json());
+
+    expect(document.components.securitySchemes.bearerAuth).toEqual({
+      type: "http",
+      scheme: "bearer",
+    });
+    expect(document.security ?? []).toEqual([]);
+    const operations = [
+      ["/api/requests", "post"],
+      ["/api/requests", "get"],
+      ["/api/requests/analytics/overdue", "get"],
+      ["/api/requests/analytics/workload", "get"],
+      ["/api/requests/{id}", "get"],
+      ["/api/requests/{id}/assignment", "patch"],
+      ["/api/requests/{id}/schedule", "patch"],
+      ["/api/requests/{id}/transitions", "post"],
+      ["/api/requests/{id}/convert-to-repair", "post"],
+    ] as const;
+    for (const [path, method] of operations) {
+      const operation = z
+        .object({ security: z.array(z.unknown()) })
+        .parse(document.paths[path]?.[method]);
+      expect(operation.security).toEqual([{ bearerAuth: [] }]);
+    }
+    const login = z
+      .object({ security: z.array(z.unknown()).optional() })
+      .parse(document.paths["/api/auth/login"]?.post);
+    expect(login.security ?? []).toEqual([]);
+  });
+
   it("publishes a strict request schema and an example accepted by the API validator", async (t) => {
     const base = await serve(t);
     const response = await fetch(`${base}/openapi.json`);

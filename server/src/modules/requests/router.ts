@@ -29,6 +29,10 @@ export function createRequestsModule(
   customService?: RequestsService,
 ): ApiModule {
   const module = createApiModule();
+  module.registry.registerComponent("securitySchemes", "bearerAuth", {
+    type: "http",
+    scheme: "bearer",
+  });
   const repository = new RequestsRepository(db);
   const service = customService ?? new RequestsService(repository, db, auth);
 
@@ -37,6 +41,7 @@ export function createRequestsModule(
       method: "post",
       path: basePath,
       operationId: "createRequest",
+      security: [{ bearerAuth: [] }],
       summary: "Создать ручную заявку на осмотр или ремонт",
       description:
         "Создание новой заявки. Доступно для Дежурного (DUTY) или Директора (DIRECTOR). Требуется указание оборудования и срока.",
@@ -93,6 +98,7 @@ export function createRequestsModule(
       method: "get",
       path: basePath,
       operationId: "listRequests",
+      security: [{ bearerAuth: [] }],
       summary: "Получить список заявок",
       description:
         "Возвращает список заявок с возможностью фильтрации по статусу, исполнителю, виду и признаку просрочки.",
@@ -134,6 +140,7 @@ export function createRequestsModule(
       method: "get",
       path: `${basePath}/analytics/overdue`,
       operationId: "getOverdueRequests",
+      security: [{ bearerAuth: [] }],
       summary: "Получить список просроченных заявок",
       description:
         "Возвращает незавершённые заявки, у которых плановый срок меньше текущего времени.",
@@ -162,6 +169,7 @@ export function createRequestsModule(
       method: "get",
       path: `${basePath}/analytics/workload`,
       operationId: "getEngineersWorkload",
+      security: [{ bearerAuth: [] }],
       summary: "Получить распределение нагрузки инженеров",
       description:
         "Возвращает количество активных незавершённых заявок по каждому сервисному инженеру.",
@@ -189,6 +197,7 @@ export function createRequestsModule(
       method: "get",
       path: `${basePath}/{id}`,
       operationId: "getRequestById",
+      security: [{ bearerAuth: [] }],
       summary: "Получить карточку заявки с журналом аудита",
       description:
         "Возвращает полную карточку заявки, включая все исторические записи журнала изменений.",
@@ -221,6 +230,7 @@ export function createRequestsModule(
       method: "patch",
       path: `${basePath}/{id}/assignment`,
       operationId: "assignRequestEngineer",
+      security: [{ bearerAuth: [] }],
       summary: "Назначить или переназначить инженера",
       description: "Назначение исполнителя заявки (Дежурный или Технический директор).",
       request: {
@@ -266,6 +276,7 @@ export function createRequestsModule(
       method: "patch",
       path: `${basePath}/{id}/schedule`,
       operationId: "updateRequestSchedule",
+      security: [{ bearerAuth: [] }],
       summary: "Изменить плановый срок или приоритет",
       description: "Изменение срока выполнения и приоритета (Технический директор или Дежурный).",
       request: {
@@ -306,6 +317,7 @@ export function createRequestsModule(
       method: "post",
       path: `${basePath}/{id}/transitions`,
       operationId: "transitionRequestStatus",
+      security: [{ bearerAuth: [] }],
       summary: "Смена статуса заявки (State Machine)",
       description:
         "Перевод заявки: NEW -> IN_PROGRESS -> COMPLETED или IN_PROGRESS <-> WAITING_PARTS. При COMPLETED обязателен непустой комментарий.",
@@ -352,6 +364,7 @@ export function createRequestsModule(
       method: "post",
       path: `${basePath}/{id}/convert-to-repair`,
       operationId: "convertInspectionToRepair",
+      security: [{ bearerAuth: [] }],
       summary: "Перевести заявку с осмотра на ремонт",
       description: "Перевод заявки вида INSPECTION в REPAIR инженером при обнаружении дефектов.",
       request: {

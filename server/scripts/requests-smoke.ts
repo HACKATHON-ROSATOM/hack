@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 
 import { createApp } from "../src/app.ts";
@@ -61,19 +62,21 @@ let auth = createAuthService(db);
 let currentServer: Server | null = null;
 const createdTicketIds: string[] = [];
 const secondEngineerId = randomUUID();
+const secondEngineerLogin = `engineer2_smoke_${secondEngineerId}`;
+let secondEngineerCreated = false;
 let failed = false;
 
 try {
-  await db.user.deleteMany({ where: { login: "engineer2_smoke" } });
-  await db.user.create({
+  const secondEngineer = await db.user.create({
     data: {
       id: secondEngineerId,
-      login: "engineer2_smoke",
+      login: secondEngineerLogin,
       passwordHash: await hashPassword("demo-engineer-2026"),
       fullName: "Второй сервисный инженер",
       role: "ENGINEER",
     },
   });
+  secondEngineerCreated = true;
 
   const { server, base } = await startServer(db, auth);
   currentServer = server;
@@ -116,7 +119,7 @@ try {
   const engineer2LoginRes = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ login: "engineer2_smoke", password: "demo-engineer-2026" }),
+    body: JSON.stringify({ login: secondEngineerLogin, password: "demo-engineer-2026" }),
   });
   assert.equal(engineer2LoginRes.status, 200);
   const engineer2Auth = (await engineer2LoginRes.json()) as {
@@ -124,6 +127,7 @@ try {
     user: { id: string; role: string };
   };
   assert.equal(engineer2Auth.user.role, "ENGINEER");
+  assert.equal(engineer2Auth.user.id, secondEngineer.id);
   const engineer2Headers = {
     "content-type": "application/json",
     authorization: `Bearer ${engineer2Auth.token}`,
@@ -267,6 +271,7 @@ try {
   const unassignedTicket = ticketResponseSchema.parse(await unassignedCreateRes.json());
   createdTicketIds.push(unassignedTicket.id);
   assert.equal(unassignedTicket.assigneeId, null);
+  assert.equal(unassignedTicket.version, 1);
 
   const startUnassignedRes = await fetch(
     `${base}/api/requests/${unassignedTicket.id}/transitions`,
@@ -328,6 +333,7 @@ try {
   assert.equal(assignValidRes.status, 200);
   const assignedTicket = ticketDetailResponseSchema.parse(await assignValidRes.json());
   assert.equal(assignedTicket.assigneeId, engineerAuth.user.id);
+  assert.equal(assignedTicket.version, 2);
   assert.equal(
     assignedTicket.auditLogs.some((l) => l.action === "ASSIGNED"),
     true,
@@ -367,6 +373,7 @@ try {
     ).json(),
   );
   assert.equal(detailAfterConcurrent.status, "IN_PROGRESS");
+  assert.equal(detailAfterConcurrent.version, 3);
   const inProgressAuditLogs = detailAfterConcurrent.auditLogs.filter(
     (l) => l.action === "STATUS_CHANGED" && l.newValue === "IN_PROGRESS",
   );
@@ -426,61 +433,100 @@ try {
   const scheduleUpdatedTicket = ticketDetailResponseSchema.parse(await scheduleUpdateRes.json());
   assert.equal(scheduleUpdatedTicket.priority, "CRITICAL");
   assert.equal(scheduleUpdatedTicket.currentDeadline, newDeadline);
+  assert.equal(scheduleUpdatedTicket.version, detailAfterConcurrent.version + 1);
 
-  const [reassignRes, oldEngineerWaitRes] = await Promise.all([
-    fetch(`${base}/api/requests/${unassignedTicket.id}/assignment`, {
-      method: "PATCH",
-      headers: dutyHeaders,
-      body: JSON.stringify({
-        assigneeId: secondEngineerId,
-        comment: "Срочная передача второму инженеру",
-      }),
-    }),
-    fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
-      method: "POST",
-      headers: engineerHeaders,
-      body: JSON.stringify({
-        toStatus: "WAITING_PARTS",
-        comment: "Прежний инженер пытается сменить статус",
-      }),
-    }),
-  ]);
-  assert.equal(reassignRes.status, 200);
-  assert.ok([200, 403].includes(oldEngineerWaitRes.status));
+  // Держим блокировку до тех пор, пока оба HTTP-запроса не встанут в очередь
+  // PostgreSQL: сначала переназначение, затем действие прежнего инженера.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const pending: Promise<Response>[] = [];
+  try {
+    await db.$transaction(
+      async (tx) => {
+        const holder = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        assert.ok(holder[0], "Не удалось получить PID транзакции блокировки");
+        const holderPid = holder[0].pid;
+        await tx.$queryRaw`SELECT "id" FROM "Ticket" WHERE "id" = ${unassignedTicket.id}::uuid FOR UPDATE`;
 
-  const postReassignOldEngineerRes = await fetch(
-    `${base}/api/requests/${unassignedTicket.id}/transitions`,
-    {
-      method: "POST",
-      headers: engineerHeaders,
-      body: JSON.stringify({
-        toStatus: "COMPLETED",
-        comment: "Прежний инженер пытается завершить чужую заявку",
-      }),
-    },
-  );
-  await expectProblem(
-    postReassignOldEngineerRes,
-    403,
-    `/api/requests/${unassignedTicket.id}/transitions`,
-  );
+        const waitForBlockedQuery = async (blockerPid: number, excludedPid?: number) => {
+          const deadline = Date.now() + 5_000;
+          while (Date.now() < deadline) {
+            const blocked = await db.$queryRaw<Array<{ pid: number }>>`
+            SELECT pid FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND ${blockerPid} = ANY(pg_blocking_pids(pid))
+              AND query LIKE '%FROM "Ticket"%FOR UPDATE%'
+              AND (${excludedPid ?? 0} = 0 OR pid <> ${excludedPid ?? 0})
+          `;
+            if (blocked.length > 0) return blocked[0]!.pid;
+            await delay(25);
+          }
+          throw new Error(`Запрос не дождался блокировки PostgreSQL за процессом ${blockerPid}`);
+        };
+
+        pending.push(
+          fetch(`${base}/api/requests/${unassignedTicket.id}/assignment`, {
+            method: "PATCH",
+            headers: dutyHeaders,
+            signal: controller.signal,
+            body: JSON.stringify({
+              assigneeId: secondEngineerId,
+              comment: "Срочная передача второму инженеру",
+            }),
+          }),
+        );
+        // Подавляем преждевременное unhandled rejection; результат проверяется ниже.
+        void pending[0]!.catch(() => {});
+        const assignmentPid = await waitForBlockedQuery(holderPid);
+
+        pending.push(
+          fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
+            method: "POST",
+            headers: engineerHeaders,
+            signal: controller.signal,
+            body: JSON.stringify({
+              toStatus: "WAITING_PARTS",
+              comment: "Прежний инженер пытается сменить статус",
+            }),
+          }),
+        );
+        void pending[1]!.catch(() => {});
+        await waitForBlockedQuery(assignmentPid, assignmentPid);
+      },
+      { timeout: 12_000 },
+    );
+
+    const [reassignRes, oldEngineerWaitRes] = await Promise.all(pending);
+    assert.equal(reassignRes!.status, 200);
+    const reassignedTicket = ticketDetailResponseSchema.parse(await reassignRes!.json());
+    assert.equal(reassignedTicket.assigneeId, secondEngineerId);
+    assert.equal(reassignedTicket.version, scheduleUpdatedTicket.version + 1);
+    await expectProblem(
+      oldEngineerWaitRes!,
+      403,
+      `/api/requests/${unassignedTicket.id}/transitions`,
+    );
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+    await Promise.allSettled(pending);
+  }
 
   const currentDetail = ticketDetailResponseSchema.parse(
     await (
       await fetch(`${base}/api/requests/${unassignedTicket.id}`, { headers: dutyHeaders })
     ).json(),
   );
-  if (currentDetail.status === "WAITING_PARTS") {
-    const resumeRes = await fetch(`${base}/api/requests/${unassignedTicket.id}/transitions`, {
-      method: "POST",
-      headers: engineer2Headers,
-      body: JSON.stringify({
-        toStatus: "IN_PROGRESS",
-        comment: "Второй инженер возобновляет работу",
-      }),
-    });
-    assert.equal(resumeRes.status, 200);
-  }
+  assert.equal(currentDetail.assigneeId, secondEngineerId);
+  assert.equal(currentDetail.status, "IN_PROGRESS");
+  assert.equal(currentDetail.version, scheduleUpdatedTicket.version + 1);
+  assert.equal(
+    currentDetail.auditLogs.some(
+      (log) => log.action === "STATUS_CHANGED" && log.newValue === "WAITING_PARTS",
+    ),
+    false,
+    "Отклонённое действие прежнего инженера не должно создавать запись перехода",
+  );
 
   const emptyCommentCloseRes = await fetch(
     `${base}/api/requests/${unassignedTicket.id}/transitions`,
@@ -512,6 +558,7 @@ try {
   const closedInspection = ticketDetailResponseSchema.parse(await validCloseRes.json());
   assert.equal(closedInspection.status, "COMPLETED");
   assert.equal(closedInspection.completionComment, inspectionCloseComment);
+  assert.equal(closedInspection.version, currentDetail.version + 1);
 
   console.log(
     "[Smoke] 6. Сквозной сценарий заявки REPAIR: работа -> ожидание ЗИП -> работа -> закрытие...",
@@ -734,6 +781,7 @@ try {
   assert.equal(afterRestartRes.status, 200);
   const afterRestartTicket = ticketDetailResponseSchema.parse(await afterRestartRes.json());
   assert.equal(afterRestartTicket.id, unassignedTicket.id);
+  assert.equal(afterRestartTicket.version, closedInspection.version);
   assert.equal(afterRestartTicket.status, "COMPLETED");
   assert.equal(afterRestartTicket.priority, "CRITICAL");
   assert.equal(afterRestartTicket.completionComment, inspectionCloseComment);
@@ -759,11 +807,19 @@ try {
       try {
         await db.ticketAuditLog.deleteMany({ where: { ticketId: id } });
         await db.ticket.delete({ where: { id } });
-      } catch {}
+      } catch (error) {
+        failed = true;
+        console.error(`Не удалось удалить тестовую заявку ${id}:`, error);
+      }
     }
-    try {
-      await db.user.deleteMany({ where: { login: "engineer2_smoke" } });
-    } catch {}
+    if (secondEngineerCreated) {
+      try {
+        await db.user.deleteMany({ where: { id: secondEngineerId } });
+      } catch (error) {
+        failed = true;
+        console.error(`Не удалось удалить тестового инженера ${secondEngineerId}:`, error);
+      }
+    }
     await db.$disconnect();
   }
 }

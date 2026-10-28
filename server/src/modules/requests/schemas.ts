@@ -192,7 +192,9 @@ export const ticketResponseSchema = z
     isOverdue: z.boolean(),
     createdAt: z.string().datetime(),
     completedAt: z.string().datetime().nullable(),
-    version: z.number().int(),
+    version: z.number().int().min(1).meta({
+      description: "Версия заявки: увеличивается при каждом успешном изменении.",
+    }),
   })
   .meta({ id: "TicketSummary", description: "Краткая информация о заявке." });
 

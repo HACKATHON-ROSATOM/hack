@@ -128,6 +128,7 @@ enum AuditAction {
 model Ticket {
   id                String           @id @default(uuid()) @db.Uuid
   ticketNumber      Int              @default(autoincrement())
+  version           Int              @default(1)
   type              TicketType
   status            TicketStatus     @default(NEW)
   priority          Priority         @default(MEDIUM)

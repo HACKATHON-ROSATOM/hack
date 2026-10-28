@@ -43,7 +43,7 @@ export function generateOpenApi(modules: readonly ApiModule[]) {
     info: {
       title: "express-app API",
       version: "1.0.0",
-      description: "Unauthenticated hackathon API. Do not store sensitive data.",
+      description: "Hackathon API. Do not store sensitive data.",
     },
     servers: [{ url: "/" }],
     security: [],
