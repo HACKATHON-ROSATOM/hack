@@ -7,7 +7,7 @@ import {
 import type { EquipmentType, Prisma } from "../src/generated/prisma/client.ts";
 
 try {
-  process.loadEnvFile();
+  process.loadEnvFile(new URL("../.env", import.meta.url));
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
