@@ -2,7 +2,7 @@ import { once } from "node:events";
 import express from "express";
 import { describe, expect, it } from "vitest";
 import type { Database } from "../src/database.ts";
-import { apiErrorHandler } from "../src/http/problem.ts";
+import { ApiError, apiErrorHandler } from "../src/http/problem.ts";
 import { generateOpenApi } from "../src/http/openapi.ts";
 import { createAuthModule } from "../src/modules/auth/router.ts";
 import { createAuthService, hashPassword } from "../src/modules/auth/service.ts";
@@ -39,10 +39,16 @@ describe("authentication", () => {
     } as unknown as Database;
     const auth = createAuthService(db);
     const module = createAuthModule(auth);
-    expect(generateOpenApi([module]).paths).toHaveProperty("/api/auth/login");
+    const document = generateOpenApi([module]);
+    expect(document.paths?.["/api/auth/login"]?.post?.description).toContain(
+      "Query parameters are not supported",
+    );
     const app = express();
     app.use(express.json());
     app.use(module.router);
+    app.get("/denied", () => {
+      throw new ApiError(403, "Forbidden.");
+    });
     app.use(apiErrorHandler);
     const server = app.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -71,7 +77,18 @@ describe("authentication", () => {
       const wrong = await login({ login: "duty", password: "wrong" });
       const missing = await login({ login: "missing", password: "wrong" });
       expect(wrong.status).toBe(401);
+      expect(wrong.headers.get("content-type")).toContain("application/problem+json");
       expect(await wrong.json()).toEqual(await missing.json());
+      const query = await fetch(`${url}?unexpected=1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login: "duty", password: "demo-password" }),
+      });
+      expect(query.status).toBe(400);
+      expect((await query.json()).instance).toBe("/api/auth/login");
+      const denied = await fetch(`http://127.0.0.1:${address.port}/denied?token=private`);
+      expect(denied.status).toBe(403);
+      expect(await denied.json()).toMatchObject({ status: 403, instance: "/denied" });
       expect((await login({ login: "duty" })).status).toBe(400);
       expect(auth.authenticate(undefined)).toBeNull();
       expect(auth.authenticate("Bearer invalid")).toBeNull();
