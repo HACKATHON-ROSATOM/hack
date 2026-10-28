@@ -7,6 +7,7 @@
     "dev:server": "pnpm --filter express-app dev",
     "build:client": "pnpm --filter client build",
     "build:server": "pnpm --filter express-app build",
+    "import:equipment": "node server/scripts/equipment-import.ts",
     "verify": "pnpm --filter express-app verify && pnpm --filter client build"
   }
 }
