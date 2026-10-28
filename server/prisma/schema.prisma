@@ -130,17 +130,20 @@ model Ticket {
   ticketNumber      Int              @default(autoincrement())
   version           Int              @default(1)
   type              TicketType
+  source            String           @default("MANUAL")
+  telemetryTurbineId String?
+  snapshot          Json?
   status            TicketStatus     @default(NEW)
   priority          Priority         @default(MEDIUM)
-  equipmentId       String           @db.Uuid
-  equipment         Equipment        @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
-  authorId          String           @db.Uuid
-  author            User             @relation("TicketAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  equipmentId       String?          @db.Uuid
+  equipment         Equipment?       @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
+  authorId          String?          @db.Uuid
+  author            User?            @relation("TicketAuthor", fields: [authorId], references: [id], onDelete: Restrict)
   assigneeId        String?          @db.Uuid
   assignee          User?            @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   description       String
-  initialDeadline   DateTime         @db.Timestamptz
-  currentDeadline   DateTime         @db.Timestamptz
+  initialDeadline   DateTime?        @db.Timestamptz
+  currentDeadline   DateTime?        @db.Timestamptz
   completionComment String?
   createdAt         DateTime         @default(now()) @db.Timestamptz
   updatedAt         DateTime         @updatedAt @db.Timestamptz
@@ -152,12 +155,19 @@ model Ticket {
   @@index([status])
 }
 
+model AlarmTelemetryState {
+  turbineId  String   @id
+  value      Int?
+  receivedAt DateTime @db.Timestamptz
+  baselineReady Boolean @default(true)
+}
+
 model TicketAuditLog {
   id        String      @id @default(uuid()) @db.Uuid
   ticketId  String      @db.Uuid
   ticket    Ticket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  authorId  String      @db.Uuid
-  author    User        @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  authorId  String?     @db.Uuid
+  author    User?       @relation(fields: [authorId], references: [id], onDelete: Restrict)
   action    AuditAction
   fieldName String?
   oldValue  String?
@@ -166,4 +176,14 @@ model TicketAuditLog {
   createdAt DateTime    @default(now()) @db.Timestamptz
 
   @@index([ticketId])
+}
+
+model TelemetryObservation {
+  id         Int      @id @default(autoincrement())
+  ca         Int
+  ioa        Int
+  value      Float
+  receivedAt DateTime @db.Timestamptz
+
+  @@index([ioa, receivedAt, id])
 }

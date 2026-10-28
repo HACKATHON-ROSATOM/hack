@@ -40,7 +40,7 @@ const filteredRequests = computed(() => requests.value.map((request) => {
   return {
     ...request,
     kind: typeLabels[request.type] || request.type,
-    equipment: object ? `${object.name}${object.externalId ? ` (${object.externalId})` : ''}` : request.equipmentId,
+    equipment: object ? `${object.name}${object.externalId ? ` (${object.externalId})` : ''}` : request.equipmentId || (request.snapshot?.turbineNumber != null ? `ВЭУ №${request.snapshot.turbineNumber}` : request.telemetryTurbineId || 'Не указано'),
     assignee: person?.name || request.assigneeId,
     priorityLabel: priorityLabels[request.priority] || request.priority,
     statusLabel: statusLabels[request.status] || request.status,

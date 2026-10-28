@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "../../database.ts";
 import { ApiError } from "../../http/problem.ts";
+import type { StatusEvent, TelemetrySnapshot } from "../monitoring/service.ts";
 import type {
   AuditAction,
   Priority,
   Ticket,
   TicketAuditLog,
+  TicketSource,
   TicketStatus,
   TicketType,
   TicketWithDetails,
@@ -38,6 +40,12 @@ export interface AuditEntryData {
 }
 
 export interface IRequestsRepository {
+  processTelemetry(snapshot: StatusEvent): Promise<TicketWithDetails | null>;
+  attachSnapshot(
+    ticketId: string,
+    snapshot: TelemetrySnapshot,
+    actorId: string,
+  ): Promise<TicketWithDetails>;
   create(data: CreateTicketData): Promise<TicketWithDetails>;
   findById(id: string): Promise<TicketWithDetails | null>;
   findMany(filters?: TicketFilters): Promise<TicketWithDetails[]>;
@@ -62,10 +70,209 @@ export class RequestsRepository implements IRequestsRepository {
   private inMemoryTickets = new Map<string, Ticket>();
   private inMemoryAudit = new Map<string, TicketAuditLog[]>();
   private lockQueues = new Map<string, Promise<void>>();
+  private telemetryState = new Map<
+    string,
+    { value: number | null; receivedAt: number; baselineReady: boolean }
+  >();
   private nextSequence = 1;
 
   constructor(db?: Database) {
     this.db = db;
+  }
+
+  async processTelemetry(snapshot: StatusEvent): Promise<TicketWithDetails | null> {
+    const statuses: Record<number, TelemetrySnapshot["status"]> = {
+      1: "STOPPED",
+      3: "READY",
+      4: "RUNNING",
+      8: "ALARM",
+    };
+    const known =
+      statuses[snapshot.value] !== undefined && statuses[snapshot.value] === snapshot.status;
+    if (!known && snapshot.status !== "UNKNOWN") return null;
+    const receivedAt = new Date(snapshot.receivedAt);
+    if (!Number.isFinite(receivedAt.getTime()))
+      throw new RangeError("Invalid telemetry timestamp.");
+    const { baseline, ...telemetry } = snapshot;
+    const event = Object.freeze(telemetry);
+    const description = `Аварийный статус турбины ${event.turbineNumber}: значение ${event.value}, CA ${event.ca}, IOA ${event.ioa}, время ${event.receivedAt}.`;
+
+    if (this.db) {
+      return this.db.$transaction(async (tx) => {
+        const value = known ? event.value : null;
+        const inserted = await tx.$queryRaw<Array<{ turbineId: string }>>`
+          INSERT INTO "AlarmTelemetryState" ("turbineId", "value", "receivedAt", "baselineReady")
+          VALUES (${event.turbineId}, ${value}, ${receivedAt}, ${known})
+          ON CONFLICT ("turbineId") DO NOTHING RETURNING "turbineId"
+        `;
+        if (inserted.length) return null;
+        const [state] = await tx.$queryRaw<
+          Array<{ value: number | null; receivedAt: Date; baselineReady: boolean }>
+        >`
+          SELECT "value", "receivedAt", "baselineReady" FROM "AlarmTelemetryState"
+          WHERE "turbineId" = ${event.turbineId} FOR UPDATE
+        `;
+        if (!state || receivedAt.getTime() < state.receivedAt.getTime()) return null;
+        if (!known) {
+          await tx.$executeRaw`
+            UPDATE "AlarmTelemetryState" SET "receivedAt" = ${receivedAt}, "baselineReady" = false
+            WHERE "turbineId" = ${event.turbineId}
+          `;
+          return null;
+        }
+        await tx.$executeRaw`
+          UPDATE "AlarmTelemetryState" SET "value" = ${event.value}, "receivedAt" = ${receivedAt}, "baselineReady" = true
+          WHERE "turbineId" = ${event.turbineId}
+        `;
+        if (baseline || !state.baselineReady || event.value !== 8 || state.value === 8) return null;
+        const ticket = await tx.ticket.create({
+          data: {
+            type: "INSPECTION",
+            source: "AUTO",
+            telemetryTurbineId: event.turbineId,
+            snapshot: { ...event },
+            description,
+            auditLogs: {
+              create: {
+                action: "CREATED",
+                comment: "Заявка создана автоматически по аварийному сигналу.",
+              },
+            },
+          },
+          include: { auditLogs: { orderBy: { createdAt: "asc" } } },
+        });
+        return this.mapPrismaTicket(ticket);
+      });
+    }
+
+    const release = await this.acquireLock(`telemetry:${event.turbineId}`);
+    try {
+      const state = this.telemetryState.get(event.turbineId);
+      if (state && receivedAt.getTime() < state.receivedAt) return null;
+      this.telemetryState.set(event.turbineId, {
+        value: known ? event.value : (state?.value ?? null),
+        receivedAt: receivedAt.getTime(),
+        baselineReady: known,
+      });
+      if (
+        !known ||
+        baseline ||
+        !state ||
+        !state.baselineReady ||
+        event.value !== 8 ||
+        state.value === 8
+      )
+        return null;
+      const ticket: Ticket = {
+        id: randomUUID(),
+        ticketNumber: this.nextSequence++,
+        type: "INSPECTION",
+        source: "AUTO",
+        status: "NEW",
+        priority: "MEDIUM",
+        equipmentId: null,
+        authorId: null,
+        assigneeId: null,
+        description,
+        telemetryTurbineId: event.turbineId,
+        snapshot: event,
+        initialDeadline: null,
+        currentDeadline: null,
+        completionComment: null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+        version: 1,
+      };
+      this.inMemoryTickets.set(ticket.id, ticket);
+      const log: TicketAuditLog = {
+        id: randomUUID(),
+        ticketId: ticket.id,
+        authorId: null,
+        action: "CREATED",
+        fieldName: null,
+        oldValue: null,
+        newValue: null,
+        comment: "Заявка создана автоматически по аварийному сигналу.",
+        createdAt: ticket.createdAt,
+      };
+      this.inMemoryAudit.set(ticket.id, [log]);
+      return { ...ticket, isOverdue: false, auditLogs: [log] };
+    } finally {
+      release();
+    }
+  }
+
+  async attachSnapshot(
+    ticketId: string,
+    snapshot: TelemetrySnapshot,
+    actorId: string,
+  ): Promise<TicketWithDetails> {
+    const event = Object.freeze({ ...snapshot });
+    if (this.db) {
+      return this.db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Ticket" WHERE "id" = ${ticketId}::uuid FOR UPDATE`;
+        const ticket = await tx.ticket.findUnique({ where: { id: ticketId } });
+        if (!ticket) throw new ApiError(404, `Заявка с идентификатором '${ticketId}' не найдена.`);
+        if (ticket.source !== "MANUAL")
+          throw new ApiError(400, "Снимок можно прикрепить только к ручной заявке.");
+        if (ticket.snapshot !== null) throw new ApiError(409, "Снимок уже прикреплён.");
+        const updated = await tx.ticket.update({
+          where: { id: ticketId },
+          data: {
+            snapshot: { ...event },
+            telemetryTurbineId: event.turbineId,
+            version: { increment: 1 },
+            auditLogs: {
+              create: {
+                authorId: actorId,
+                action: "COMMENT_ADDED",
+                fieldName: "snapshot",
+                comment: "Прикреплён снимок телеметрии",
+              },
+            },
+          },
+          include: { auditLogs: { orderBy: { createdAt: "asc" } } },
+        });
+        return this.mapPrismaTicket(updated);
+      });
+    }
+    const release = await this.acquireLock(ticketId);
+    try {
+      const ticket = this.inMemoryTickets.get(ticketId);
+      if (!ticket) throw new ApiError(404, `Заявка с идентификатором '${ticketId}' не найдена.`);
+      if (ticket.source !== "MANUAL")
+        throw new ApiError(400, "Снимок можно прикрепить только к ручной заявке.");
+      if (ticket.snapshot !== null) throw new ApiError(409, "Снимок уже прикреплён.");
+      const updated = {
+        ...ticket,
+        snapshot: event,
+        telemetryTurbineId: event.turbineId,
+        version: ticket.version + 1,
+      };
+      const logs = [
+        ...(this.inMemoryAudit.get(ticketId) ?? []),
+        {
+          id: randomUUID(),
+          ticketId,
+          authorId: actorId,
+          action: "COMMENT_ADDED" as const,
+          fieldName: "snapshot",
+          oldValue: null,
+          newValue: null,
+          comment: "Прикреплён снимок телеметрии",
+          createdAt: new Date().toISOString(),
+        },
+      ];
+      this.inMemoryTickets.set(ticketId, updated);
+      this.inMemoryAudit.set(ticketId, logs);
+      return {
+        ...updated,
+        isOverdue: this.isOverdue(updated.status, updated.currentDeadline),
+        auditLogs: logs,
+      };
+    } finally {
+      release();
+    }
   }
 
   private async acquireLock(id: string): Promise<() => void> {
@@ -92,21 +299,24 @@ export class RequestsRepository implements IRequestsRepository {
     ticketNumber: number;
     version: number;
     type: TicketType;
+    source: string;
+    telemetryTurbineId: string | null;
+    snapshot: unknown;
     status: TicketStatus;
     priority: Priority;
-    equipmentId: string;
-    authorId: string;
+    equipmentId: string | null;
+    authorId: string | null;
     assigneeId: string | null;
     description: string;
-    initialDeadline: Date;
-    currentDeadline: Date;
+    initialDeadline: Date | null;
+    currentDeadline: Date | null;
     completionComment: string | null;
     createdAt: Date;
     completedAt: Date | null;
     auditLogs?: Array<{
       id: string;
       ticketId: string;
-      authorId: string;
+      authorId: string | null;
       action: AuditAction;
       fieldName: string | null;
       oldValue: string | null;
@@ -120,15 +330,17 @@ export class RequestsRepository implements IRequestsRepository {
       id: ticket.id,
       ticketNumber: ticket.ticketNumber,
       type: ticket.type,
-      source: "MANUAL",
+      source: ticket.source as TicketSource,
       status: ticket.status,
       priority: ticket.priority,
       equipmentId: ticket.equipmentId,
       authorId: ticket.authorId,
       assigneeId: ticket.assigneeId,
       description: ticket.description,
-      initialDeadline: ticket.initialDeadline.toISOString(),
-      currentDeadline: ticket.currentDeadline.toISOString(),
+      telemetryTurbineId: ticket.telemetryTurbineId,
+      snapshot: ticket.snapshot as TelemetrySnapshot | null,
+      initialDeadline: ticket.initialDeadline?.toISOString() ?? null,
+      currentDeadline: ticket.currentDeadline?.toISOString() ?? null,
       completionComment: ticket.completionComment,
       createdAt: ticket.createdAt.toISOString(),
       completedAt: ticket.completedAt ? ticket.completedAt.toISOString() : null,
@@ -216,6 +428,8 @@ export class RequestsRepository implements IRequestsRepository {
       authorId: data.authorId,
       assigneeId: data.assigneeId ?? null,
       description: data.description,
+      telemetryTurbineId: null,
+      snapshot: null,
       initialDeadline: data.initialDeadline,
       currentDeadline: data.initialDeadline,
       completionComment: null,
@@ -305,7 +519,11 @@ export class RequestsRepository implements IRequestsRepository {
       } else if (filters?.isOverdue === false) {
         where.AND = [
           {
-            OR: [{ status: "COMPLETED" as const }, { currentDeadline: { gte: new Date() } }],
+            OR: [
+              { status: "COMPLETED" as const },
+              { currentDeadline: null },
+              { currentDeadline: { gte: new Date() } },
+            ],
           },
         ];
       }
@@ -365,7 +583,7 @@ export class RequestsRepository implements IRequestsRepository {
           type?: TicketType;
           priority?: Priority;
           assigneeId?: string | null;
-          currentDeadline?: Date;
+          currentDeadline?: Date | null;
           completionComment?: string | null;
           completedAt?: Date | null;
           auditLogs: {
@@ -382,7 +600,12 @@ export class RequestsRepository implements IRequestsRepository {
           version: { increment: 1 },
           auditLogs: {
             create: entries.map((entry) => ({
-              authorId: entry.authorId ?? existing.authorId,
+              authorId:
+                entry.authorId ??
+                existing.authorId ??
+                (() => {
+                  throw new Error("Audit author is required");
+                })(),
               action: entry.action === "TYPE_CHANGED" ? "COMMENT_ADDED" : entry.action,
               fieldName: entry.fieldName ?? null,
               oldValue: entry.oldValue ? String(entry.oldValue) : null,
@@ -396,8 +619,10 @@ export class RequestsRepository implements IRequestsRepository {
         if (updates.type !== undefined) updateData.type = updates.type;
         if (updates.priority !== undefined) updateData.priority = updates.priority;
         if (updates.assigneeId !== undefined) updateData.assigneeId = updates.assigneeId;
-        if (updates.currentDeadline) {
-          updateData.currentDeadline = new Date(updates.currentDeadline);
+        if (updates.currentDeadline !== undefined) {
+          updateData.currentDeadline = updates.currentDeadline
+            ? new Date(updates.currentDeadline)
+            : null;
         }
         if (updates.completionComment !== undefined) {
           updateData.completionComment = updates.completionComment;
@@ -426,7 +651,15 @@ export class RequestsRepository implements IRequestsRepository {
     const now = new Date().toISOString();
     const updatedTicket: Ticket = {
       ...existing,
-      ...updates,
+      ...(updates.status !== undefined && { status: updates.status }),
+      ...(updates.type !== undefined && { type: updates.type }),
+      ...(updates.priority !== undefined && { priority: updates.priority }),
+      ...(updates.assigneeId !== undefined && { assigneeId: updates.assigneeId }),
+      ...(updates.currentDeadline !== undefined && { currentDeadline: updates.currentDeadline }),
+      ...(updates.completionComment !== undefined && {
+        completionComment: updates.completionComment,
+      }),
+      ...(updates.completedAt !== undefined && { completedAt: updates.completedAt }),
       version: existing.version + 1,
     };
 
@@ -487,7 +720,7 @@ export class RequestsRepository implements IRequestsRepository {
           type?: TicketType;
           priority?: Priority;
           assigneeId?: string | null;
-          currentDeadline?: Date;
+          currentDeadline?: Date | null;
           completionComment?: string | null;
           completedAt?: Date | null;
           auditLogs: {
@@ -504,7 +737,12 @@ export class RequestsRepository implements IRequestsRepository {
           version: { increment: 1 },
           auditLogs: {
             create: entries.map((entry) => ({
-              authorId: entry.authorId ?? existingRecord.authorId,
+              authorId:
+                entry.authorId ??
+                existingRecord.authorId ??
+                (() => {
+                  throw new Error("Audit author is required");
+                })(),
               action: entry.action === "TYPE_CHANGED" ? "COMMENT_ADDED" : entry.action,
               fieldName: entry.fieldName ?? null,
               oldValue: entry.oldValue ? String(entry.oldValue) : null,
@@ -518,8 +756,10 @@ export class RequestsRepository implements IRequestsRepository {
         if (updates.type !== undefined) updateData.type = updates.type;
         if (updates.priority !== undefined) updateData.priority = updates.priority;
         if (updates.assigneeId !== undefined) updateData.assigneeId = updates.assigneeId;
-        if (updates.currentDeadline) {
-          updateData.currentDeadline = new Date(updates.currentDeadline);
+        if (updates.currentDeadline !== undefined) {
+          updateData.currentDeadline = updates.currentDeadline
+            ? new Date(updates.currentDeadline)
+            : null;
         }
         if (updates.completionComment !== undefined) {
           updateData.completionComment = updates.completionComment;

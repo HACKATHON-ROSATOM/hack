@@ -4,6 +4,8 @@ import http from "node:http";
 import { createApp } from "./app.ts";
 import { environmentSchema } from "./config.ts";
 import { createDatabase } from "./database.ts";
+import { Iec104Client } from "./modules/monitoring/iec104.ts";
+import { MonitoringService } from "./modules/monitoring/service.ts";
 
 const result = environmentSchema.safeParse(process.env);
 if (!result.success) {
@@ -13,6 +15,10 @@ if (!result.success) {
 }
 
 const config = result.data;
+if (Boolean(config.IEC104_HOST) !== Boolean(config.IEC104_PORT)) {
+  console.error("IEC104_HOST and IEC104_PORT must be configured together.");
+  process.exit(1);
+}
 const log = debug("express-app:server");
 const db = createDatabase(config.DATABASE_URL);
 
@@ -25,7 +31,22 @@ try {
   process.exit(1);
 }
 
-const app = createApp(db);
+const monitoring = new MonitoringService(db);
+const iecClient =
+  config.IEC104_HOST && config.IEC104_PORT
+    ? new Iec104Client({
+        host: config.IEC104_HOST,
+        port: config.IEC104_PORT,
+        onConnection: (connected) => monitoring.setConnected(connected),
+        onObservation: (observation) => {
+          void monitoring.receive(observation).catch((error: unknown) => {
+            console.error("Telemetry persistence failed:", error);
+          });
+        },
+      })
+    : undefined;
+const app = createApp(db, undefined, monitoring);
+iecClient?.start();
 
 app.set("port", config.PORT);
 app.set("env", config.NODE_ENV);
@@ -67,6 +88,7 @@ server.listen(config.PORT);
 let shuttingDown = false;
 function shutdown() {
   if (shuttingDown) return;
+  iecClient?.stop();
   shuttingDown = true;
   server.close(() => {
     void db.$disconnect().catch(() => {

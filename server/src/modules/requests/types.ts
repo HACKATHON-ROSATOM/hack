@@ -1,3 +1,5 @@
+import type { TelemetrySnapshot } from "../monitoring/service.ts";
+
 export type UserRole = "DUTY" | "ENGINEER" | "DIRECTOR" | "ANONYMOUS";
 
 export type TicketType = "INSPECTION" | "REPAIR";
@@ -24,10 +26,12 @@ export interface Ticket {
   source: TicketSource;
   status: TicketStatus;
   priority: Priority;
-  equipmentId: string;
+  equipmentId: string | null;
   authorId: string | null;
   assigneeId: string | null;
   description: string;
+  telemetryTurbineId: string | null;
+  snapshot: TelemetrySnapshot | null;
   initialDeadline: string | null;
   currentDeadline: string | null;
   completionComment: string | null;
