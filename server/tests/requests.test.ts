@@ -391,7 +391,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
       }),
     });
     const problem = await expectProblem(response, 400, "/api/requests");
-    expect(problem.detail).toBe("Срок не может быть в прошлом.");
+    expect(problem.detail).toBe("Срок исполнения заявки должен быть в будущем.");
   });
 
   it("rejects ticket creation with non-existent assigneeId with 400", async (t) => {
@@ -877,6 +877,24 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
       }),
     });
     await expectProblem(dutyScheduleRes, 403, `/api/requests/${ticket.id}/schedule`);
+  });
+
+  it("rejects creation with a past deadline without saving a ticket", async (t) => {
+    const { base } = await serveRequests(t);
+    const response = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: dutyHeaders,
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "Осмотр оборудования",
+        initialDeadline: new Date(Date.now() - 86400000).toISOString(),
+      }),
+    });
+    await expectProblem(response, 400, "/api/requests");
+
+    const list = await fetch(`${base}/api/requests`, { headers: dutyHeaders });
+    expect(ticketListResponseSchema.parse(await list.json()).items).toHaveLength(0);
   });
 
   it("provides analytics for overdue tickets and engineer workload", async (t) => {

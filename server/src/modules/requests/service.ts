@@ -122,8 +122,8 @@ export class RequestsService {
     }
 
     const deadlineMs = new Date(input.initialDeadline).getTime();
-    if (Number.isNaN(deadlineMs) || deadlineMs < Date.now()) {
-      throw new ApiError(400, "Срок не может быть в прошлом.");
+    if (Number.isNaN(deadlineMs) || deadlineMs <= Date.now()) {
+      throw new ApiError(400, "Срок исполнения заявки должен быть в будущем.");
     }
 
     if (this.db?.equipment) {
