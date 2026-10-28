@@ -5,17 +5,17 @@ services:
       target: development
     init: true
     ports:
-      - "${HOST_PORT:-3000}:${PORT-3000}"
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
     env_file:
       - path: .env
         required: false
     environment:
       NODE_ENV: "${NODE_ENV-development}"
-      PORT: "${PORT-3000}"
+      PORT: "3000"
       DEBUG: "${DEBUG-express-app:server}"
       DATABASE_URL: "postgresql://express:express@db:5432/express_app"
     depends_on:
-      migrate:
+      initialize:
         condition: service_completed_successfully
     volumes:
       - ./server/src:/app/server/src:ro
@@ -33,6 +33,34 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    init: true
+    environment:
+      NUXT_API_BASE: "http://app:3000"
+    ports:
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-3002}:3002"
+    depends_on:
+      app:
+        condition: service_healthy
+
+  initialize:
+    build:
+      context: .
+      target: development
+    working_dir: /app/server
+    command: ["sh", "-c", "node scripts/auth-seed.ts && node scripts/equipment-import.ts --initial"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: "postgresql://express:express@db:5432/express_app"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
   migrate:
     build:
