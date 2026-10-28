@@ -44,7 +44,8 @@ export function createRequestsModule(
       operationId: "createRequest",
       security: [{ bearerAuth: [] }],
       summary: "Создать ручную заявку на осмотр или ремонт",
-      description: "Создание ручной заявки дежурным. Требуется оборудование и срок, который ещё не наступил."
+      description:
+        "Создание ручной заявки дежурным. Требуется оборудование и срок, который ещё не наступил.",
       request: {
         query: noQuerySchema,
         body: {
