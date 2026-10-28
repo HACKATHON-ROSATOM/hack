@@ -12,12 +12,18 @@ import { createAuthModule } from "./modules/auth/router.ts";
 import { createAuthService, type AuthService } from "./modules/auth/service.ts";
 import { createEquipmentModule } from "./modules/equipment/router.ts";
 import { createNotesModule } from "./modules/notes/router.ts";
+import { createRequestsModule } from "./modules/requests/router.ts";
 import indexRouter from "./routes/index.ts";
 import usersRouter from "./routes/users.ts";
 
 export function createApp(db: Database, auth: AuthService = createAuthService(db)) {
   const app = express();
-  const apiModules = [createNotesModule(db), createEquipmentModule(db), createAuthModule(auth)];
+  const apiModules = [
+    createNotesModule(db),
+    createEquipmentModule(db),
+    createAuthModule(auth),
+    createRequestsModule(db, auth),
+  ];
   const openApiDocument = JSON.stringify(generateOpenApi(apiModules));
 
   app.set("views", path.join(import.meta.dirname, "../views"));
