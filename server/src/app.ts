@@ -22,7 +22,7 @@ export function createApp(db: Database, auth: AuthService = createAuthService(db
     createNotesModule(db),
     createEquipmentModule(db),
     createAuthModule(auth),
-    createRequestsModule(db),
+    createRequestsModule(db, auth),
   ];
   const openApiDocument = JSON.stringify(generateOpenApi(apiModules));
 
