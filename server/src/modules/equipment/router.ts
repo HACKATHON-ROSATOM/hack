@@ -18,7 +18,7 @@ export function createEquipmentModule(db: Database): ApiModule {
       operationId: "listEquipment",
       summary: "List equipment",
       description:
-        "Pages start at 1; pageSize defaults to 20 and is limited to 100. Search matches name or external ID without case sensitivity.",
+        "Pages start at 1; pageSize defaults to 20 and is limited to 100. Search matches name, external ID or hierarchy location without case sensitivity.",
       request: { query: equipmentListQuerySchema },
       responses: {
         200: {
@@ -40,7 +40,10 @@ export function createEquipmentModule(db: Database): ApiModule {
         ? {
             OR: [
               { name: { contains: search, mode: "insensitive" as const } },
-              { externalId: { contains: search, mode: "insensitive" as const } },
+              { externalIdKey: { contains: search, mode: "insensitive" as const } },
+              ...Array.from({ length: 7 }, (_, level) => ({
+                [`hierarchyLevel${level}`]: { contains: search, mode: "insensitive" as const },
+              })),
             ],
           }
         : {};
@@ -49,15 +52,49 @@ export function createEquipmentModule(db: Database): ApiModule {
           db.equipment.count({ where }),
           db.equipment.findMany({
             where,
-            select: { id: true, externalId: true, name: true, type: true },
-            orderBy: [{ externalId: "asc" }, { id: "asc" }],
+            select: {
+              id: true,
+              externalId: true,
+              name: true,
+              type: true,
+              hierarchyLevel0: true,
+              hierarchyLevel1: true,
+              hierarchyLevel2: true,
+              hierarchyLevel3: true,
+              hierarchyLevel4: true,
+              hierarchyLevel5: true,
+              hierarchyLevel6: true,
+              externalIdKey: true,
+            },
+            orderBy: [{ externalIdKey: "asc" }, { id: "asc" }],
             skip,
             take: pageSize,
           }),
         ],
         { isolationLevel: "RepeatableRead" },
       );
-      res.json({ items, page, pageSize, total });
+      res.json({
+        items: items.map((item) => ({
+          id: item.id,
+          externalId: item.externalId,
+          name: item.name,
+          type: item.type,
+          location: [
+            item.hierarchyLevel0,
+            item.hierarchyLevel1,
+            item.hierarchyLevel2,
+            item.hierarchyLevel3,
+            item.hierarchyLevel4,
+            item.hierarchyLevel5,
+            item.hierarchyLevel6,
+          ]
+            .filter((level): level is string => typeof level === "string" && level.length > 0)
+            .join(" / "),
+        })),
+        page,
+        pageSize,
+        total,
+      });
     },
   );
   api.register(

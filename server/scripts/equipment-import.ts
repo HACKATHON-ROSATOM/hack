@@ -63,12 +63,22 @@ try {
           comment: text(r[15]),
         };
         const equipment = await tx.equipment.upsert({
-          where: { externalId: item.externalId },
-          create: { externalId: item.externalId, ...data },
-          update: data,
+          where: { externalIdKey: item.externalIdKey },
+          create: {
+            externalId: item.externalId === null ? null : String(item.externalId),
+            externalIdType: item.externalIdType,
+            externalIdKey: item.externalIdKey,
+            ...data,
+          },
+          update: {
+            externalId: item.externalId === null ? null : String(item.externalId),
+            externalIdType: item.externalIdType,
+            externalIdKey: item.externalIdKey,
+            ...data,
+          },
           select: { id: true },
         });
-        equipmentIds.set(item.externalId, equipment.id);
+        equipmentIds.set(item.externalIdKey, equipment.id);
       }
       for (const item of workbook.history) {
         const r = item.row;

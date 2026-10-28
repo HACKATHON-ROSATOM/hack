@@ -23,7 +23,8 @@ const equipmentType = z.enum([
 ]);
 export const equipmentSummarySchema = z.object({
   id: z.uuid(),
-  externalId: z.string(),
+  externalId: z.string().nullable(),
+  location: z.string(),
   name: z.string(),
   type: equipmentType,
 });
@@ -58,7 +59,7 @@ const recordSchema = z.object({
   sourceSheet: z.string(),
   sourceRow: z.number().int(),
 });
-export const equipmentDetailSchema = equipmentSummarySchema.extend({
+export const equipmentDetailSchema = equipmentSummarySchema.omit({ location: true }).extend({
   hierarchyLevel0: nullableText,
   hierarchyLevel1: nullableText,
   hierarchyLevel2: nullableText,

@@ -77,7 +77,13 @@ export async function readEquipmentWorkbook(path: string) {
   requireHeaders(equipmentRows, equipmentHeaders);
   requireHeaders(historyRows, historyHeaders);
   const ids = new Set<string>();
-  const equipment: { externalId: string; row: Row; hierarchy: (Cell | null)[] }[] = [];
+  const equipment: {
+    externalId: Cell;
+    externalIdType: string;
+    externalIdKey: string;
+    row: Row;
+    hierarchy: (Cell | null)[];
+  }[] = [];
   const hierarchy: (Cell | null)[] = Array(7).fill(null);
   for (const row of equipmentRows.slice(1)) {
     for (let level = 0; level < 7; level++) {
@@ -87,12 +93,19 @@ export async function readEquipmentWorkbook(path: string) {
         hierarchy.fill(null, level + 1);
       }
     }
-    const externalId = identifier(row[0]);
-    if (!externalId) continue;
-    if (ids.has(externalId))
-      throw new Error(`Повторяется идентификатор оборудования: ${externalId}`);
-    ids.add(externalId);
-    equipment.push({ externalId, row, hierarchy: [...hierarchy] });
+    const externalId = row[0];
+    const externalIdKey = identifier(externalId);
+    if (!externalIdKey) continue;
+    if (ids.has(externalIdKey))
+      throw new Error(`Повторяется идентификатор оборудования: ${externalIdKey}`);
+    ids.add(externalIdKey);
+    equipment.push({
+      externalId: externalId ?? null,
+      externalIdType: typeof externalId,
+      externalIdKey,
+      row,
+      hierarchy: [...hierarchy],
+    });
   }
   const occurrences = new Map<string, number>();
   const history = historyRows.slice(1).flatMap((row, index) => {

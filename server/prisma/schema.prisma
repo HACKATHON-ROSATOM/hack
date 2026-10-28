@@ -26,7 +26,9 @@ enum EquipmentType {
 
 model Equipment {
   id                  String              @id @default(uuid()) @db.Uuid
-  externalId          String              @unique
+  externalId          String?
+  externalIdType      String?
+  externalIdKey       String              @unique
   name                String
   type                EquipmentType
   hierarchyLevel0     String?
