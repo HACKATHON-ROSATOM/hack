@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import express from "express";
-import { describe, expect, it, type TestContext } from "vitest";
+import { describe, expect, it, vi, type TestContext } from "vitest";
 import { z } from "zod";
 
 import type { Database } from "../src/database.ts";
@@ -884,7 +884,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const engineerA = DEMO_USERS.engineer.id;
     const engineerB = DEMO_USERS.engineer2.id;
 
-    const yesterday = new Date(Date.now() - 86400000).toISOString();
+    const deadline = Date.now() + 3_600_000;
     const overdueRes = await fetch(`${base}/api/requests`, {
       method: "POST",
       headers: dutyHeaders,
@@ -892,17 +892,11 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Просроченный осмотр",
-        initialDeadline: futureDeadline(),
+        initialDeadline: new Date(deadline).toISOString(),
         assigneeId: engineerA,
       }),
     });
     const overdueTicket = ticketResponseSchema.parse(await overdueRes.json());
-    const scheduleRes = await fetch(`${base}/api/requests/${overdueTicket.id}/schedule`, {
-      method: "PATCH",
-      headers: dutyHeaders,
-      body: JSON.stringify({ currentDeadline: yesterday }),
-    });
-    expect(scheduleRes.status).toBe(200);
 
     await fetch(`${base}/api/requests`, {
       method: "POST",
@@ -927,6 +921,8 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
         assigneeId: engineerB,
       }),
     });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(deadline + 1);
+    t.onTestFinished(() => clock.mockRestore());
 
     const overdueListRes = await fetch(`${base}/api/requests/analytics/overdue`, {
       headers: dutyHeaders,
