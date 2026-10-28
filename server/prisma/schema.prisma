@@ -15,3 +15,64 @@ model Note {
   content   String
   createdAt DateTime @default(now())
 }
+
+enum EquipmentType {
+  GENERATOR
+  CONVERTER
+  LUBRICATION_SYSTEM
+  CONTROLLER
+  TRANSFORMER
+}
+
+model Equipment {
+  id                  String              @id @default(uuid()) @db.Uuid
+  externalId          String?
+  externalIdType      String?
+  externalIdKey       String              @unique
+  name                String
+  type                EquipmentType
+  hierarchyLevel0     String?
+  hierarchyLevel1     String?
+  hierarchyLevel2     String?
+  hierarchyLevel3     String?
+  hierarchyLevel4     String?
+  hierarchyLevel5     String?
+  hierarchyLevel6     String?
+  typicalRepairObject String?
+  commissionedOn      DateTime?           @db.Date
+  manufacturedOn      DateTime?           @db.Date
+  workSchedule        String?
+  usefulLifeMonths    Int?
+  inventoryNumber     String?
+  comment             String?
+  history             MaintenanceRecord[]
+}
+
+model MaintenanceRecord {
+  id                    String     @id @default(uuid()) @db.Uuid
+  importRowId           String     @unique
+  externalEquipmentId   String
+  equipmentId           String?    @db.Uuid
+  equipment             Equipment? @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
+  workType              String?
+  statusAtImport        String?
+  downtimeReason        String?
+  completedOn           DateTime?  @db.Date
+  operatingMetric       String?
+  operatingUnit         String?
+  plannedOperatingValue Decimal?
+  plannedPeriod         String?
+  periodDuration        Decimal?
+  workFrom              DateTime?  @db.Date
+  workTo                DateTime?  @db.Date
+  operatingValue        Decimal?
+  controlledIndicator   String?
+  indicatorUnit         String?
+  controlledOn          DateTime?  @db.Date
+  indicatorValue        String?
+  rawData               Json
+  sourceSheet           String
+  sourceRow             Int
+
+  @@index([equipmentId])
+}

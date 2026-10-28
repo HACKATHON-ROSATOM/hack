@@ -8,13 +8,14 @@ import path from "node:path";
 import type { Database } from "./database.ts";
 import { generateOpenApi } from "./http/openapi.ts";
 import { ApiError, apiErrorHandler } from "./http/problem.ts";
+import { createEquipmentModule } from "./modules/equipment/router.ts";
 import { createNotesModule } from "./modules/notes/router.ts";
 import indexRouter from "./routes/index.ts";
 import usersRouter from "./routes/users.ts";
 
 export function createApp(db: Database) {
   const app = express();
-  const apiModules = [createNotesModule(db)];
+  const apiModules = [createNotesModule(db), createEquipmentModule(db)];
   const openApiDocument = JSON.stringify(generateOpenApi(apiModules));
 
   app.set("views", path.join(import.meta.dirname, "../views"));
