@@ -27,9 +27,9 @@ const isAssignedEngineer = computed(() => userStore.role === 'engineer' && userS
 const canAssign = computed(() => ['dispatcher', 'director'].includes(userStore.role) && request.value?.status !== 'COMPLETED')
 const canAttachSnapshot = computed(() => ['dispatcher', 'director'].includes(userStore.role) && request.value?.source === 'MANUAL' && !request.value?.snapshot)
 
-function sameInstant(left, right) {
-  if (!left && !right) return true
-  return new Date(left).getTime() === new Date(right).getTime()
+function deadlineChanged() {
+  const original = splitDeadline(request.value.currentDeadline)
+  return dueDate.value !== original.date || dueTime.value !== original.time
 }
 function setRequest(value) {
   request.value = value
@@ -84,7 +84,7 @@ async function schedule() {
   const body = {}
   if (priorityDraft.value !== request.value.priority) body.priority = priorityDraft.value
   const deadline = joinDeadline(dueDate.value, dueTime.value)
-  if (!sameInstant(deadline, request.value.currentDeadline)) {
+  if (deadlineChanged()) {
     if (!deadline) { actionError.value = 'Укажите корректный срок.'; return }
     body.currentDeadline = deadline
   }
@@ -95,6 +95,7 @@ async function schedule() {
 async function setAutoDeadline() {
   const deadline = joinDeadline(dueDate.value, dueTime.value)
   if (!deadline) { actionError.value = 'Укажите корректный срок.'; return }
+  if (!deadlineChanged()) { actionError.value = 'Измените срок.'; return }
   await update('schedule', 'PATCH', { currentDeadline: deadline, ...(managementComment.value.trim() ? { comment: managementComment.value.trim() } : {}) })
 }
 async function attachSnapshot() {

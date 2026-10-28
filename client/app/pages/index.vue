@@ -10,7 +10,7 @@ const workload = ref([])
 const engineers = ref([])
 const loading = ref(true)
 const error = ref('')
-const roleTitle = computed(() => ({ dispatcher: 'Дежурный', engineer: 'Инженер', director: 'Технический директор' })[userStore.role] || 'Сводка')
+const roleTitle = computed(() => ({ dispatcher: 'Дежурный', engineer: 'Сервисный инженер', director: 'Технический директор' })[userStore.role] || 'Сводка')
 const relevant = computed(() => userStore.role === 'engineer'
   ? requests.value.filter(item => item.assigneeId === userStore.user?.id)
   : requests.value)
