@@ -22,6 +22,14 @@ const stats = computed(() => [
   ...(userStore.role === 'engineer' ? [] : [{ label: 'Без исполнителя', value: unassigned.value.length }]),
 ])
 const statusLabels = { NEW: 'Новая', IN_PROGRESS: 'В работе', WAITING_PARTS: 'Ожидание запчастей', COMPLETED: 'Завершена' }
+const statusColors = { NEW: '#2563eb', IN_PROGRESS: '#7c3aed', WAITING_PARTS: '#d97706', COMPLETED: '#16a34a' }
+const statusMetrics = computed(() => Object.entries(statusLabels).map(([status, label]) => ({
+  status,
+  label,
+  count: relevant.value.filter(item => item.status === status).length,
+  color: statusColors[status],
+})))
+const chartData = computed(() => statusMetrics.value.filter(item => item.count > 0))
 const workloadRows = computed(() => engineers.value
   .filter(person => userStore.role !== 'engineer' || person.id === userStore.user?.id)
   .map(person => ({
@@ -72,6 +80,31 @@ onMounted(load)
     <div v-else-if="error" role="alert" class="space-y-2 text-sm text-red-700"><p>{{ error }}</p><UButton variant="outline" @click="load">Повторить</UButton></div>
     <template v-else>
       <StatCards :stats="stats" />
+      <UCard v-if="userStore.role === 'director'" class="bg-white ring-1 ring-brand/15">
+        <h2 class="text-lg font-semibold text-gray-900">Заявки по статусам</h2>
+        <p class="mt-1 text-sm text-gray-600">Текущее распределение всех заявок</p>
+        <p v-if="!relevant.length" class="mt-4 text-sm text-gray-600">Заявок пока нет.</p>
+        <div v-else class="mt-4 flex flex-wrap items-center gap-6">
+          <UChart
+            type="donut"
+            :data="chartData"
+            index="label"
+            :categories="[{ key: 'count', label: 'Заявки' }]"
+            :colors="chartData.map(item => item.color)"
+            :legend="false"
+            :height="220"
+            aria-label="Распределение заявок по статусам"
+            class="w-full max-w-64"
+          />
+          <ul class="min-w-48 flex-1 space-y-3">
+            <li v-for="item in statusMetrics" :key="item.status" class="flex items-center gap-2 text-sm text-gray-900">
+              <span aria-hidden="true" class="size-3 shrink-0 rounded-full" :style="{ backgroundColor: item.color }" />
+              <span class="flex-1">{{ item.label }}</span>
+              <span class="font-semibold tabular-nums">{{ item.count }}</span>
+            </li>
+          </ul>
+        </div>
+      </UCard>
       <UCard class="bg-white ring-1 ring-brand/15">
         <h2 class="mb-4 text-lg font-semibold text-gray-900">{{ userStore.role === 'engineer' ? 'Мои активные заявки' : 'Активные заявки' }}</h2>
         <p v-if="!active.length" class="text-sm text-gray-600">Активных заявок нет.</p>
