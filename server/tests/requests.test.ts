@@ -210,7 +210,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const engineerId = randomUUID();
     const dutyId = randomUUID();
 
-    // 1. Создание заявки дежурным (DUTY)
     const createRes = await fetch(`${base}/api/requests`, {
       method: "POST",
       headers: {
@@ -241,7 +240,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const ticketId = createdTicket.id;
 
-    // 2. Чтение сохранённой заявки через API с проверкой первого аудита
     const readRes = await fetch(`${base}/api/requests/${ticketId}`);
     expect(readRes.status).toBe(200);
     const rawRead: unknown = await readRes.json();
@@ -251,7 +249,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(readDetails.auditLogs.length).toBe(1);
     expect(readDetails.auditLogs[0]?.action).toBe("CREATED");
 
-    // 3. Назначение инженера дежурным
     const assignRes = await fetch(`${base}/api/requests/${ticketId}/assignment`, {
       method: "PATCH",
       headers: {
@@ -269,7 +266,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const assignedTicket = ticketDetailResponseSchema.parse(await assignRes.json());
     expect(assignedTicket.assigneeId).toBe(engineerId);
 
-    // 4. Попытка инженера напрямую закрыть заявку из NEW -> 400
     const prematureCloseRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
       headers: {
@@ -284,7 +280,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     });
     await expectProblem(prematureCloseRes, 400, `/api/requests/${ticketId}/transitions`);
 
-    // 5. Инженер берёт заявку в работу (NEW -> IN_PROGRESS)
     const startRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
       headers: {
@@ -306,7 +301,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     );
     expect(startLog).toBeDefined();
 
-    // 6. Инженер переводит в ожидание запчастей (IN_PROGRESS -> WAITING_PARTS)
     const waitRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
       headers: {
@@ -323,7 +317,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const waitingTicket = ticketDetailResponseSchema.parse(await waitRes.json());
     expect(waitingTicket.status).toBe("WAITING_PARTS");
 
-    // 7. Возобновление работы (WAITING_PARTS -> IN_PROGRESS)
     const resumeRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
       headers: {
@@ -340,7 +333,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const resumedTicket = ticketDetailResponseSchema.parse(await resumeRes.json());
     expect(resumedTicket.status).toBe("IN_PROGRESS");
 
-    // 8. Попытка завершить без комментария или с пробелами -> 400
     const noCommentRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
       headers: {
@@ -355,7 +347,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     });
     await expectProblem(noCommentRes, 400, `/api/requests/${ticketId}/transitions`);
 
-    // 9. Успешное завершение с обязательным отчётом
     const completionComment = "Сальник заменен, давление в норме, течей нет.";
     const completeRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
@@ -376,7 +367,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(completedTicket.completedAt).toBeDefined();
     expect(completedTicket.completionComment).toBe(completionComment);
 
-    // 10. Проверка полной цепочки аудита (Audit Trail)
     const finalRes = await fetch(`${base}/api/requests/${ticketId}`);
     const finalTicket = ticketDetailResponseSchema.parse(await finalRes.json());
     const actions = finalTicket.auditLogs.map((log) => log.action);
@@ -386,8 +376,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(actions).toContain("STATUS_CHANGED");
     expect(finalTicket.auditLogs.length).toBeGreaterThanOrEqual(5);
 
-    // 11. Переоткрытие завершённой заявки:
-    // 11.1 Инженер не имеет права переоткрывать (403 Forbidden)
     const engineerReopenRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
       headers: {
@@ -402,7 +390,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     });
     await expectProblem(engineerReopenRes, 403, `/api/requests/${ticketId}/transitions`);
 
-    // 11.2 Дежурный без указания причины получает 400 Bad Request
     const noReasonReopenRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
       headers: {
@@ -417,7 +404,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     });
     await expectProblem(noReasonReopenRes, 400, `/api/requests/${ticketId}/transitions`);
 
-    // 11.3 Успешное переоткрытие дежурным с причиной (200 OK)
     const validReopenRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
       headers: {
@@ -441,7 +427,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const { base } = await serveRequests(t);
     const equipmentId = randomUUID();
 
-    // Создаем заявку типа INSPECTION
     const createRes = await fetch(`${base}/api/requests`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-user-role": "DUTY" },
@@ -454,7 +439,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const ticket = ticketResponseSchema.parse(await createRes.json());
     expect(ticket.type).toBe("INSPECTION");
 
-    // Переводим в REPAIR инженером
     const convertReason = "Обнаружен критический износ тормозных колодок, требуется замена";
     const convertRes = await fetch(`${base}/api/requests/${ticket.id}/convert-to-repair`, {
       method: "POST",
@@ -475,7 +459,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(conversionLog?.newValue).toBe("REPAIR");
     expect(conversionLog?.comment).toBe(convertReason);
 
-    // Повторный перевод REPAIR в REPAIR невозможен -> 400
     const invalidConvert = await fetch(`${base}/api/requests/${ticket.id}/convert-to-repair`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-user-role": "ENGINEER" },
@@ -514,7 +497,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(updated.priority).toBe("CRITICAL");
     expect(updated.currentDeadline).toBe(newDeadline);
 
-    // Проверяем, что инженер не имеет права менять дедлайн
     const engineerScheduleRes = await fetch(`${base}/api/requests/${ticket.id}/schedule`, {
       method: "PATCH",
       headers: { "content-type": "application/json", "x-user-role": "ENGINEER" },
@@ -528,7 +510,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const engineerA = randomUUID();
     const engineerB = randomUUID();
 
-    // Создаём просроченную заявку (дедлайн вчера)
     const yesterday = new Date(Date.now() - 86400000).toISOString();
     const overdueRes = await fetch(`${base}/api/requests`, {
       method: "POST",
@@ -543,7 +524,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     });
     const overdueTicket = ticketResponseSchema.parse(await overdueRes.json());
 
-    // Создаём вторую активную заявку для того же инженера
     await fetch(`${base}/api/requests`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-user-role": "DUTY" },
@@ -555,7 +535,6 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
       }),
     });
 
-    // Создаём заявку для инженера B
     await fetch(`${base}/api/requests`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-user-role": "DUTY" },
@@ -567,13 +546,11 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
       }),
     });
 
-    // Проверка эндпоинта просроченных заявок
     const overdueListRes = await fetch(`${base}/api/requests/analytics/overdue`);
     expect(overdueListRes.status).toBe(200);
     const overdueList = ticketListResponseSchema.parse(await overdueListRes.json());
     expect(overdueList.items.some((t) => t.id === overdueTicket.id)).toBe(true);
 
-    // Проверка эндпоинта нагрузки инженеров
     const workloadRes = await fetch(`${base}/api/requests/analytics/workload`);
     expect(workloadRes.status).toBe(200);
     const workload = workloadListResponseSchema.parse(await workloadRes.json());

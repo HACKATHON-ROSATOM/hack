@@ -200,9 +200,7 @@ export class RequestsRepository implements IRequestsRepository {
             completedAt: created.completedAt?.toISOString() ?? null,
           };
         });
-      } catch {
-        // Fallback to in-memory store
-      }
+      } catch {}
     }
 
     this.inMemoryTickets.set(id, ticket);
@@ -235,9 +233,7 @@ export class RequestsRepository implements IRequestsRepository {
             })),
           };
         }
-      } catch {
-        // Fallback to in-memory
-      }
+      } catch {}
     }
 
     const ticket = this.inMemoryTickets.get(id);

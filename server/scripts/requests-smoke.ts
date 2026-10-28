@@ -33,13 +33,17 @@ async function expectProblem(response: Response, status: number, path: string) {
   assert.equal(problem.instance, path);
 }
 
-// 1. Инициализация базы данных (при наличии конфигурации)
+try {
+  process.loadEnvFile();
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+}
+
 const envResult = environmentSchema.pick({ DATABASE_URL: true }).safeParse(process.env);
 const db: Database | undefined = envResult.success
   ? createDatabase(envResult.data.DATABASE_URL)
   : undefined;
 
-// 2. Инициализация Express приложения с модулем ручных заявок
 const app = express();
 app.use("/api", express.json({ limit: "16kb" }));
 const requestsModule = createRequestsModule(db);
@@ -67,7 +71,6 @@ try {
 
   console.log(`[Smoke] Test server listening at ${base}`);
 
-  // ШАГ 1: Создание заявки на осмотр (POST /api/requests) дежурным
   console.log("[Smoke] Step 1: Creating ticket by DUTY role...");
   const createRes = await fetch(`${base}/api/requests`, {
     method: "POST",
@@ -94,7 +97,6 @@ try {
   assert.equal(created.status, "NEW");
   assert.equal(created.source, "MANUAL");
 
-  // ШАГ 2: Чтение сохранённой заявки и проверка аудита (GET /api/requests/{id})
   console.log("[Smoke] Step 2: Reading ticket and verifying initial audit log...");
   const readRes = await fetch(`${base}${location}`);
   assert.equal(readRes.status, 200);
@@ -104,7 +106,6 @@ try {
   assert.equal(readDetails.auditLogs.length, 1);
   assert.equal(readDetails.auditLogs[0]?.action, "CREATED");
 
-  // ШАГ 3: Назначение инженера (PATCH /api/requests/{id}/assignment)
   console.log("[Smoke] Step 3: Assigning engineer to ticket...");
   const assignRes = await fetch(`${base}${location}/assignment`, {
     method: "PATCH",
@@ -124,7 +125,6 @@ try {
   const assignLog = assigned.auditLogs.find((l) => l.action === "ASSIGNED");
   assert.ok(assignLog);
 
-  // ШАГ 4: Инженер начинает работу (POST /api/requests/{id}/transitions -> IN_PROGRESS)
   console.log("[Smoke] Step 4: Engineer starts ticket (NEW -> IN_PROGRESS)...");
   const startRes = await fetch(`${base}${location}/transitions`, {
     method: "POST",
@@ -142,7 +142,6 @@ try {
   const started = ticketDetailResponseSchema.parse(await startRes.json());
   assert.equal(started.status, "IN_PROGRESS");
 
-  // ШАГ 5: Проверка валидации обязательного комментария при закрытии
   console.log("[Smoke] Step 5: Verifying mandatory completion comment validation...");
   const emptyCloseRes = await fetch(`${base}${location}/transitions`, {
     method: "POST",
@@ -158,7 +157,6 @@ try {
   });
   await expectProblem(emptyCloseRes, 400, `${location}/transitions`);
 
-  // ШАГ 6: Успешное завершение работы с непустым комментарием
   console.log("[Smoke] Step 6: Completing ticket with detailed report...");
   const closeComment = "Осмотр завершён успешно, дефектов не обнаружено.";
   const completeRes = await fetch(`${base}${location}/transitions`, {
@@ -179,7 +177,6 @@ try {
   assert.equal(completed.completionComment, closeComment);
   assert.ok(completed.completedAt);
 
-  // ШАГ 7: Проверка перевода осмотра в ремонт на новой заявке
   console.log("[Smoke] Step 7: Testing conversion from INSPECTION to REPAIR...");
   const createForConvertRes = await fetch(`${base}/api/requests`, {
     method: "POST",
@@ -203,7 +200,6 @@ try {
   const converted = ticketDetailResponseSchema.parse(await convertRes.json());
   assert.equal(converted.type, "REPAIR");
 
-  // ШАГ 8: Проверка аналитических эндпоинтов
   console.log("[Smoke] Step 8: Verifying analytics endpoints...");
   const overdueRes = await fetch(`${base}/api/requests/analytics/overdue`);
   assert.equal(overdueRes.status, 200);
@@ -215,7 +211,6 @@ try {
   const workloadData = workloadListResponseSchema.parse(await workloadRes.json());
   assert.ok(Array.isArray(workloadData.items));
 
-  // ШАГ 9: Проверка граничных условий и ошибок 400/404/415
   console.log("[Smoke] Step 9: Verifying error handling (400, 404, 415)...");
   const nonExistentId = randomUUID();
   await expectProblem(
