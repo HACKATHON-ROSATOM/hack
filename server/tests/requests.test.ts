@@ -6,9 +6,11 @@ import { describe, expect, it, type TestContext } from "vitest";
 import { z } from "zod";
 
 import { ApiError, apiErrorHandler } from "../src/http/problem.ts";
+import { PREDEFINED_USERS, signToken } from "../src/modules/requests/auth.ts";
 import { RequestsRepository } from "../src/modules/requests/repository.ts";
 import { createRequestsModule } from "../src/modules/requests/router.ts";
 import {
+  loginResponseSchema,
   ticketDetailResponseSchema,
   ticketListResponseSchema,
   ticketResponseSchema,
@@ -33,6 +35,25 @@ async function expectProblem(response: Response, status: number, instance: strin
   expect(problem.instance).toBe(instance);
   return problem;
 }
+
+const dutyToken = signToken(PREDEFINED_USERS.duty.id, "DUTY");
+const engineerToken = signToken(PREDEFINED_USERS.engineer.id, "ENGINEER");
+const directorToken = signToken(PREDEFINED_USERS.director.id, "DIRECTOR");
+
+const dutyHeaders = {
+  "content-type": "application/json",
+  authorization: `Bearer ${dutyToken}`,
+};
+
+const engineerHeaders = {
+  "content-type": "application/json",
+  authorization: `Bearer ${engineerToken}`,
+};
+
+const directorHeaders = {
+  "content-type": "application/json",
+  authorization: `Bearer ${directorToken}`,
+};
 
 async function serveRequests(t: TestContext) {
   const repo = new RequestsRepository();
@@ -62,29 +83,74 @@ async function serveRequests(t: TestContext) {
   return { base: `http://127.0.0.1:${address.port}`, repo, service };
 }
 
-describe("Requests Module - Input Boundaries", () => {
+describe("Requests Module - Authentication & Input Boundaries", () => {
+  it("authenticates predefined users via /api/auth/login and rejects invalid credentials", async (t) => {
+    const { base } = await serveRequests(t);
+
+    const validRes = await fetch(`${base}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "duty", password: "duty123" }),
+    });
+    expect(validRes.status).toBe(200);
+    const loginData = loginResponseSchema.parse(await validRes.json());
+    expect(loginData.user.username).toBe("duty");
+    expect(loginData.user.role).toBe("DUTY");
+    expect(loginData.token).toBeDefined();
+
+    const invalidRes = await fetch(`${base}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "duty", password: "wrongpassword" }),
+    });
+    await expectProblem(invalidRes, 400, "/api/auth/login");
+  });
+
   it("rejects non-JSON request body with 415", async (t) => {
     const { base } = await serveRequests(t);
     const response = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "text/plain", "x-user-role": "DUTY" },
+      headers: { "content-type": "text/plain", authorization: `Bearer ${dutyToken}` },
       body: "plain text",
     });
     await expectProblem(response, 415, "/api/requests");
   });
 
   it.for([
-    ["missing type", { equipmentId: randomUUID(), description: "Test" }],
-    ["invalid type", { type: "UNKNOWN", equipmentId: randomUUID(), description: "Test" }],
-    ["invalid equipmentId", { type: "INSPECTION", equipmentId: "not-a-uuid", description: "Test" }],
-    ["empty description", { type: "INSPECTION", equipmentId: randomUUID(), description: "" }],
     [
-      "whitespace description",
-      { type: "INSPECTION", equipmentId: randomUUID(), description: "   " },
+      "missing type",
+      { equipmentId: randomUUID(), description: "Test", initialDeadline: new Date().toISOString() },
     ],
     [
-      "invalid priority",
-      { type: "INSPECTION", equipmentId: randomUUID(), description: "Test", priority: "URGENT" },
+      "invalid type",
+      {
+        type: "UNKNOWN",
+        equipmentId: randomUUID(),
+        description: "Test",
+        initialDeadline: new Date().toISOString(),
+      },
+    ],
+    [
+      "invalid equipmentId",
+      {
+        type: "INSPECTION",
+        equipmentId: "not-a-uuid",
+        description: "Test",
+        initialDeadline: new Date().toISOString(),
+      },
+    ],
+    [
+      "empty description",
+      {
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "",
+        initialDeadline: new Date().toISOString(),
+      },
+    ],
+    [
+      "missing initialDeadline",
+      { type: "INSPECTION", equipmentId: randomUUID(), description: "Test" },
     ],
     [
       "invalid deadline format",
@@ -96,11 +162,22 @@ describe("Requests Module - Input Boundaries", () => {
       },
     ],
     [
+      "invalid priority",
+      {
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "Test",
+        initialDeadline: new Date().toISOString(),
+        priority: "URGENT",
+      },
+    ],
+    [
       "unknown field",
       {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Test",
+        initialDeadline: new Date().toISOString(),
         unexpectedProperty: true,
       },
     ],
@@ -108,7 +185,7 @@ describe("Requests Module - Input Boundaries", () => {
     const { base } = await serveRequests(t);
     const response = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DUTY" },
+      headers: dutyHeaders,
       body: JSON.stringify(body),
     });
     await expectProblem(response, 400, "/api/requests");
@@ -118,11 +195,12 @@ describe("Requests Module - Input Boundaries", () => {
     const { base } = await serveRequests(t);
     const response = await fetch(`${base}/api/requests?extra=param`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DUTY" },
+      headers: dutyHeaders,
       body: JSON.stringify({
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Routine check",
+        initialDeadline: new Date().toISOString(),
       }),
     });
     await expectProblem(response, 400, "/api/requests");
@@ -143,7 +221,7 @@ describe("Requests Module - Input Boundaries", () => {
 });
 
 describe("Requests Module - Role-Based Access Control (RBAC)", () => {
-  it("rejects ticket creation for anonymous callers (missing x-user-role)", async (t) => {
+  it("rejects ticket creation for unauthenticated callers (no bearer token)", async (t) => {
     const { base } = await serveRequests(t);
     const response = await fetch(`${base}/api/requests`, {
       method: "POST",
@@ -152,20 +230,41 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Anonymous check",
+        initialDeadline: new Date().toISOString(),
       }),
     });
-    await expectProblem(response, 403, "/api/requests");
+    await expectProblem(response, 401, "/api/requests");
   });
 
-  it("rejects ticket creation for ENGINEER role", async (t) => {
+  it("rejects ticket creation when spoofing X-User-Role header without valid token", async (t) => {
     const { base } = await serveRequests(t);
     const response = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "ENGINEER" },
+      headers: {
+        "content-type": "application/json",
+        "x-user-role": "DUTY",
+        "x-user-id": PREDEFINED_USERS.duty.id,
+      },
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "Spoof check",
+        initialDeadline: new Date().toISOString(),
+      }),
+    });
+    await expectProblem(response, 401, "/api/requests");
+  });
+
+  it("rejects ticket creation for ENGINEER role with 403 Forbidden", async (t) => {
+    const { base } = await serveRequests(t);
+    const response = await fetch(`${base}/api/requests`, {
+      method: "POST",
+      headers: engineerHeaders,
       body: JSON.stringify({
         type: "INSPECTION",
         equipmentId: randomUUID(),
         description: "Engineer cannot create initial ticket",
+        initialDeadline: new Date().toISOString(),
       }),
     });
     await expectProblem(response, 403, "/api/requests");
@@ -176,11 +275,12 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
     const equipmentId = randomUUID();
     const response = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DUTY" },
+      headers: dutyHeaders,
       body: JSON.stringify({
         type: "INSPECTION",
         equipmentId,
         description: "Плановый осмотр ветрогенератора ВЭУ-01",
+        initialDeadline: new Date().toISOString(),
       }),
     });
     expect(response.status).toBe(201);
@@ -191,12 +291,13 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
     const equipmentId = randomUUID();
     const response = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DIRECTOR" },
+      headers: directorHeaders,
       body: JSON.stringify({
         type: "REPAIR",
         equipmentId,
         description: "Срочный ремонт лопасти по распоряжению руководства",
         priority: "CRITICAL",
+        initialDeadline: new Date().toISOString(),
       }),
     });
     expect(response.status).toBe(201);
@@ -207,16 +308,11 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
   it("executes the full lifecycle: create -> assign -> start -> wait parts -> resume -> complete", async (t) => {
     const { base } = await serveRequests(t);
     const equipmentId = randomUUID();
-    const engineerId = randomUUID();
-    const dutyId = randomUUID();
+    const engineerId = PREDEFINED_USERS.engineer.id;
 
     const createRes = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "DUTY",
-        "x-user-id": dutyId,
-      },
+      headers: dutyHeaders,
       body: JSON.stringify({
         type: "INSPECTION",
         equipmentId,
@@ -251,11 +347,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const assignRes = await fetch(`${base}/api/requests/${ticketId}/assignment`, {
       method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "DUTY",
-        "x-user-id": dutyId,
-      },
+      headers: dutyHeaders,
       body: JSON.stringify({
         assigneeId: engineerId,
         comment: "Назначен дежурный инженер смены",
@@ -268,11 +360,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const prematureCloseRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "ENGINEER",
-        "x-user-id": engineerId,
-      },
+      headers: engineerHeaders,
       body: JSON.stringify({
         toStatus: "COMPLETED",
         comment: "Закрыто раньше времени",
@@ -282,11 +370,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const startRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "ENGINEER",
-        "x-user-id": engineerId,
-      },
+      headers: engineerHeaders,
       body: JSON.stringify({
         toStatus: "IN_PROGRESS",
         comment: "Выезд на ветроустановку",
@@ -303,11 +387,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const waitRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "ENGINEER",
-        "x-user-id": engineerId,
-      },
+      headers: engineerHeaders,
       body: JSON.stringify({
         toStatus: "WAITING_PARTS",
         comment: "Требуется сальник для гидросистемы",
@@ -319,11 +399,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const resumeRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "ENGINEER",
-        "x-user-id": engineerId,
-      },
+      headers: engineerHeaders,
       body: JSON.stringify({
         toStatus: "IN_PROGRESS",
         comment: "Запчасть получена со склада, монтаж",
@@ -335,11 +411,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const noCommentRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "ENGINEER",
-        "x-user-id": engineerId,
-      },
+      headers: engineerHeaders,
       body: JSON.stringify({
         toStatus: "COMPLETED",
         comment: "   ",
@@ -350,11 +422,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const completionComment = "Сальник заменен, давление в норме, течей нет.";
     const completeRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "ENGINEER",
-        "x-user-id": engineerId,
-      },
+      headers: engineerHeaders,
       body: JSON.stringify({
         toStatus: "COMPLETED",
         comment: completionComment,
@@ -378,11 +446,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const engineerReopenRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "ENGINEER",
-        "x-user-id": engineerId,
-      },
+      headers: engineerHeaders,
       body: JSON.stringify({
         toStatus: "IN_PROGRESS",
         comment: "Инженер пытается переоткрыть",
@@ -392,11 +456,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const noReasonReopenRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "DUTY",
-        "x-user-id": dutyId,
-      },
+      headers: dutyHeaders,
       body: JSON.stringify({
         toStatus: "IN_PROGRESS",
         comment: "   ",
@@ -406,11 +466,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const validReopenRes = await fetch(`${base}/api/requests/${ticketId}/transitions`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "DUTY",
-        "x-user-id": dutyId,
-      },
+      headers: dutyHeaders,
       body: JSON.stringify({
         toStatus: "IN_PROGRESS",
         comment: "Ошибочное закрытие, требуется повторный контрольный пуск",
@@ -429,11 +485,12 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const createRes = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DUTY" },
+      headers: dutyHeaders,
       body: JSON.stringify({
         type: "INSPECTION",
         equipmentId,
         description: "Осмотр тормозной системы",
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     const ticket = ticketResponseSchema.parse(await createRes.json());
@@ -442,10 +499,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const convertReason = "Обнаружен критический износ тормозных колодок, требуется замена";
     const convertRes = await fetch(`${base}/api/requests/${ticket.id}/convert-to-repair`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-user-role": "ENGINEER",
-      },
+      headers: engineerHeaders,
       body: JSON.stringify({ comment: convertReason }),
     });
 
@@ -461,22 +515,23 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const invalidConvert = await fetch(`${base}/api/requests/${ticket.id}/convert-to-repair`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "ENGINEER" },
+      headers: engineerHeaders,
       body: JSON.stringify({ comment: "Повторная попытка" }),
     });
     await expectProblem(invalidConvert, 400, `/api/requests/${ticket.id}/convert-to-repair`);
   });
 
-  it("supports updating schedule deadline and priority with audit logging", async (t) => {
+  it("supports updating schedule deadline and priority with dual audit logging", async (t) => {
     const { base } = await serveRequests(t);
     const createRes = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DUTY" },
+      headers: dutyHeaders,
       body: JSON.stringify({
         type: "REPAIR",
         equipmentId: randomUUID(),
         description: "Ремонт инвертора",
         priority: "LOW",
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
     const ticket = ticketResponseSchema.parse(await createRes.json());
@@ -484,7 +539,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     const newDeadline = new Date(Date.now() + 172800000).toISOString();
     const updateRes = await fetch(`${base}/api/requests/${ticket.id}/schedule`, {
       method: "PATCH",
-      headers: { "content-type": "application/json", "x-user-role": "DIRECTOR" },
+      headers: directorHeaders,
       body: JSON.stringify({
         currentDeadline: newDeadline,
         priority: "CRITICAL",
@@ -497,9 +552,16 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(updated.priority).toBe("CRITICAL");
     expect(updated.currentDeadline).toBe(newDeadline);
 
+    const deadlineLog = updated.auditLogs.find((l) => l.action === "DEADLINE_CHANGED");
+    const priorityLog = updated.auditLogs.find((l) => l.action === "PRIORITY_CHANGED");
+    expect(deadlineLog).toBeDefined();
+    expect(priorityLog).toBeDefined();
+    expect(deadlineLog?.newValue).toBe(newDeadline);
+    expect(priorityLog?.newValue).toBe("CRITICAL");
+
     const engineerScheduleRes = await fetch(`${base}/api/requests/${ticket.id}/schedule`, {
       method: "PATCH",
-      headers: { "content-type": "application/json", "x-user-role": "ENGINEER" },
+      headers: engineerHeaders,
       body: JSON.stringify({ priority: "LOW" }),
     });
     await expectProblem(engineerScheduleRes, 403, `/api/requests/${ticket.id}/schedule`);
@@ -507,13 +569,13 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
   it("provides analytics for overdue tickets and engineer workload", async (t) => {
     const { base } = await serveRequests(t);
-    const engineerA = randomUUID();
+    const engineerA = PREDEFINED_USERS.engineer.id;
     const engineerB = randomUUID();
 
     const yesterday = new Date(Date.now() - 86400000).toISOString();
     const overdueRes = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DUTY" },
+      headers: dutyHeaders,
       body: JSON.stringify({
         type: "INSPECTION",
         equipmentId: randomUUID(),
@@ -526,22 +588,24 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DUTY" },
+      headers: dutyHeaders,
       body: JSON.stringify({
         type: "REPAIR",
         equipmentId: randomUUID(),
         description: "Вторая заявка инженера А",
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
         assigneeId: engineerA,
       }),
     });
 
     await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-user-role": "DUTY" },
+      headers: dutyHeaders,
       body: JSON.stringify({
         type: "REPAIR",
         equipmentId: randomUUID(),
         description: "Заявка инженера Б",
+        initialDeadline: new Date(Date.now() + 86400000).toISOString(),
         assigneeId: engineerB,
       }),
     });
