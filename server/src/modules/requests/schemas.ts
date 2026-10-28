@@ -45,7 +45,6 @@ export const createRequestSchema = z
     initialDeadline: z
       .string()
       .datetime()
-      .optional()
       .meta({ description: "Первоначальный плановый срок в формате ISO 8601" }),
     assigneeId: z
       .string()
@@ -224,3 +223,31 @@ export const workloadListResponseSchema = z
     items: z.array(workloadItemResponseSchema),
   })
   .meta({ id: "WorkloadList", description: "Сводка распределения нагрузки по инженерам." });
+
+export const loginSchema = z
+  .strictObject({
+    username: z.string().trim().min(1).meta({ description: "Имя пользователя" }),
+    password: z.string().min(1).meta({ description: "Пароль" }),
+  })
+  .meta({
+    id: "LoginInput",
+    description:
+      "Учётные данные для авторизации (дежурный: duty/duty123, инженер: engineer/engineer123, директор: director/director123).",
+    example: { username: "duty", password: "duty123" },
+  });
+
+export const userProfileSchema = z
+  .strictObject({
+    id: z.string().uuid(),
+    username: z.string(),
+    fullName: z.string(),
+    role: z.enum(["DUTY", "ENGINEER", "DIRECTOR"]),
+  })
+  .meta({ id: "UserProfile", description: "Профиль авторизованного пользователя." });
+
+export const loginResponseSchema = z
+  .strictObject({
+    token: z.string().meta({ description: "Bearer токен авторизации" }),
+    user: userProfileSchema,
+  })
+  .meta({ id: "LoginResponse", description: "Успешная авторизация с выдачей токена." });
