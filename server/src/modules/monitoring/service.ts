@@ -158,9 +158,10 @@ export class MonitoringService {
             value: observation?.value ?? null,
             receivedAt: observation?.receivedAt.toISOString() ?? null,
             fresh,
-            freshForMs: fresh && observation
-              ? Math.max(0, FRESH_MS - (now - observation.receivedAt.getTime()))
-              : 0,
+            freshForMs:
+              fresh && observation
+                ? Math.max(0, FRESH_MS - (now - observation.receivedAt.getTime()))
+                : 0,
           };
         }),
       })),
