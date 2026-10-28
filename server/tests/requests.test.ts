@@ -6,11 +6,10 @@ import { describe, expect, it, type TestContext } from "vitest";
 import { z } from "zod";
 
 import { ApiError, apiErrorHandler } from "../src/http/problem.ts";
-import { PREDEFINED_USERS, signToken } from "../src/modules/requests/auth.ts";
+import type { AuthService } from "../src/modules/auth/service.ts";
 import { RequestsRepository } from "../src/modules/requests/repository.ts";
 import { createRequestsModule } from "../src/modules/requests/router.ts";
 import {
-  loginResponseSchema,
   ticketDetailResponseSchema,
   ticketListResponseSchema,
   ticketResponseSchema,
@@ -36,29 +35,65 @@ async function expectProblem(response: Response, status: number, instance: strin
   return problem;
 }
 
-const dutyToken = signToken(PREDEFINED_USERS.duty.id, "DUTY");
-const engineerToken = signToken(PREDEFINED_USERS.engineer.id, "ENGINEER");
-const directorToken = signToken(PREDEFINED_USERS.director.id, "DIRECTOR");
+const DEMO_USERS = {
+  duty: {
+    id: "6e7270af-021d-4c31-9c49-c22d94d17c5b",
+    name: "Дежурный",
+    role: "DUTY" as const,
+  },
+  engineer: {
+    id: "17f570cb-e70b-418b-b7d0-409e5ee19697",
+    name: "Сервисный инженер",
+    role: "ENGINEER" as const,
+  },
+  director: {
+    id: "5dbb285c-7deb-4a2a-a961-c24a6860afdc",
+    name: "Директор",
+    role: "DIRECTOR" as const,
+  },
+};
+
+const tokens = {
+  duty: "duty-session-token-valid-sample-12345678",
+  engineer: "engineer-session-token-valid-sample-1234",
+  director: "director-session-token-valid-sample-1234",
+};
+
+const mockAuth: AuthService = {
+  async login() {
+    return null;
+  },
+  authenticate(authorization?: string) {
+    if (!authorization) return null;
+    const match = /^Bearer (.+)$/i.exec(authorization.trim());
+    if (!match?.[1]) return null;
+    const token = match[1];
+    if (token === tokens.duty) return DEMO_USERS.duty;
+    if (token === tokens.engineer) return DEMO_USERS.engineer;
+    if (token === tokens.director) return DEMO_USERS.director;
+    return null;
+  },
+};
 
 const dutyHeaders = {
   "content-type": "application/json",
-  authorization: `Bearer ${dutyToken}`,
+  authorization: `Bearer ${tokens.duty}`,
 };
 
 const engineerHeaders = {
   "content-type": "application/json",
-  authorization: `Bearer ${engineerToken}`,
+  authorization: `Bearer ${tokens.engineer}`,
 };
 
 const directorHeaders = {
   "content-type": "application/json",
-  authorization: `Bearer ${directorToken}`,
+  authorization: `Bearer ${tokens.director}`,
 };
 
 async function serveRequests(t: TestContext) {
   const repo = new RequestsRepository();
-  const service = new RequestsService(repo);
-  const requestsModule = createRequestsModule(undefined, service);
+  const service = new RequestsService(repo, undefined, mockAuth);
+  const requestsModule = createRequestsModule(undefined, mockAuth, service);
 
   const app = express();
   app.use("/api", express.json({ limit: "16kb" }));
@@ -84,33 +119,36 @@ async function serveRequests(t: TestContext) {
 }
 
 describe("Requests Module - Authentication & Input Boundaries", () => {
-  it("authenticates predefined users via /api/auth/login and rejects invalid credentials", async (t) => {
+  it("rejects unauthenticated requests without token on create, list, and analytics with 401", async (t) => {
     const { base } = await serveRequests(t);
 
-    const validRes = await fetch(`${base}/api/auth/login`, {
+    const postRes = await fetch(`${base}/api/requests`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: "duty", password: "duty123" }),
+      body: JSON.stringify({
+        type: "INSPECTION",
+        equipmentId: randomUUID(),
+        description: "No token",
+        initialDeadline: new Date().toISOString(),
+      }),
     });
-    expect(validRes.status).toBe(200);
-    const loginData = loginResponseSchema.parse(await validRes.json());
-    expect(loginData.user.username).toBe("duty");
-    expect(loginData.user.role).toBe("DUTY");
-    expect(loginData.token).toBeDefined();
+    await expectProblem(postRes, 401, "/api/requests");
 
-    const invalidRes = await fetch(`${base}/api/auth/login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: "duty", password: "wrongpassword" }),
-    });
-    await expectProblem(invalidRes, 400, "/api/auth/login");
+    const getRes = await fetch(`${base}/api/requests`);
+    await expectProblem(getRes, 401, "/api/requests");
+
+    const overdueRes = await fetch(`${base}/api/requests/analytics/overdue`);
+    await expectProblem(overdueRes, 401, "/api/requests/analytics/overdue");
+
+    const workloadRes = await fetch(`${base}/api/requests/analytics/workload`);
+    await expectProblem(workloadRes, 401, "/api/requests/analytics/workload");
   });
 
   it("rejects non-JSON request body with 415", async (t) => {
     const { base } = await serveRequests(t);
     const response = await fetch(`${base}/api/requests`, {
       method: "POST",
-      headers: { "content-type": "text/plain", authorization: `Bearer ${dutyToken}` },
+      headers: { "content-type": "text/plain", authorization: `Bearer ${tokens.duty}` },
       body: "plain text",
     });
     await expectProblem(response, 415, "/api/requests");
@@ -215,7 +253,7 @@ describe("Requests Module - Authentication & Input Boundaries", () => {
   it("returns 404 for non-existent ticket UUID", async (t) => {
     const { base } = await serveRequests(t);
     const nonExistentId = randomUUID();
-    const response = await fetch(`${base}/api/requests/${nonExistentId}`);
+    const response = await fetch(`${base}/api/requests/${nonExistentId}`, { headers: dutyHeaders });
     await expectProblem(response, 404, `/api/requests/${nonExistentId}`);
   });
 });
@@ -243,7 +281,7 @@ describe("Requests Module - Role-Based Access Control (RBAC)", () => {
       headers: {
         "content-type": "application/json",
         "x-user-role": "DUTY",
-        "x-user-id": PREDEFINED_USERS.duty.id,
+        "x-user-id": DEMO_USERS.duty.id,
       },
       body: JSON.stringify({
         type: "INSPECTION",
@@ -308,7 +346,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
   it("executes the full lifecycle: create -> assign -> start -> wait parts -> resume -> complete", async (t) => {
     const { base } = await serveRequests(t);
     const equipmentId = randomUUID();
-    const engineerId = PREDEFINED_USERS.engineer.id;
+    const engineerId = DEMO_USERS.engineer.id;
 
     const createRes = await fetch(`${base}/api/requests`, {
       method: "POST",
@@ -336,7 +374,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
     const ticketId = createdTicket.id;
 
-    const readRes = await fetch(`${base}/api/requests/${ticketId}`);
+    const readRes = await fetch(`${base}/api/requests/${ticketId}`, { headers: dutyHeaders });
     expect(readRes.status).toBe(200);
     const rawRead: unknown = await readRes.json();
     const readDetails = ticketDetailResponseSchema.parse(rawRead);
@@ -435,7 +473,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
     expect(completedTicket.completedAt).toBeDefined();
     expect(completedTicket.completionComment).toBe(completionComment);
 
-    const finalRes = await fetch(`${base}/api/requests/${ticketId}`);
+    const finalRes = await fetch(`${base}/api/requests/${ticketId}`, { headers: dutyHeaders });
     const finalTicket = ticketDetailResponseSchema.parse(await finalRes.json());
     const actions = finalTicket.auditLogs.map((log) => log.action);
 
@@ -569,7 +607,7 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
 
   it("provides analytics for overdue tickets and engineer workload", async (t) => {
     const { base } = await serveRequests(t);
-    const engineerA = PREDEFINED_USERS.engineer.id;
+    const engineerA = DEMO_USERS.engineer.id;
     const engineerB = randomUUID();
 
     const yesterday = new Date(Date.now() - 86400000).toISOString();
@@ -610,12 +648,16 @@ describe("Requests Module - End-to-End Workflow & State Machine", () => {
       }),
     });
 
-    const overdueListRes = await fetch(`${base}/api/requests/analytics/overdue`);
+    const overdueListRes = await fetch(`${base}/api/requests/analytics/overdue`, {
+      headers: dutyHeaders,
+    });
     expect(overdueListRes.status).toBe(200);
     const overdueList = ticketListResponseSchema.parse(await overdueListRes.json());
     expect(overdueList.items.some((t) => t.id === overdueTicket.id)).toBe(true);
 
-    const workloadRes = await fetch(`${base}/api/requests/analytics/workload`);
+    const workloadRes = await fetch(`${base}/api/requests/analytics/workload`, {
+      headers: dutyHeaders,
+    });
     expect(workloadRes.status).toBe(200);
     const workload = workloadListResponseSchema.parse(await workloadRes.json());
 

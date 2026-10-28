@@ -2,16 +2,13 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
-import express from "express";
 import { z } from "zod";
 
+import { createApp } from "../src/app.ts";
 import { environmentSchema } from "../src/config.ts";
 import { createDatabase, type Database } from "../src/database.ts";
-import { ApiError, apiErrorHandler } from "../src/http/problem.ts";
-import { PREDEFINED_USERS } from "../src/modules/requests/auth.ts";
-import { createRequestsModule } from "../src/modules/requests/router.ts";
+import { createAuthService, type AuthService } from "../src/modules/auth/service.ts";
 import {
-  loginResponseSchema,
   ticketDetailResponseSchema,
   ticketListResponseSchema,
   ticketResponseSchema,
@@ -46,20 +43,11 @@ if (!envResult.success) {
   throw new Error("Не задан корректный DATABASE_URL");
 }
 
-function buildApp(db: Database) {
-  const app = express();
-  app.use("/api", express.json({ limit: "16kb" }));
-  const requestsModule = createRequestsModule(db);
-  app.use(requestsModule.router);
-  app.use("/api", () => {
-    throw new ApiError(404, "API resource not found.");
-  });
-  app.use("/api", apiErrorHandler);
-  return app;
-}
-
-async function startServer(db: Database): Promise<{ server: Server; base: string }> {
-  const app = buildApp(db);
+async function startServer(
+  db: Database,
+  auth: AuthService,
+): Promise<{ server: Server; base: string }> {
+  const app = createApp(db, auth);
   const server = createServer(app);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -69,24 +57,28 @@ async function startServer(db: Database): Promise<{ server: Server; base: string
 }
 
 let db = createDatabase(envResult.data.DATABASE_URL);
+let auth = createAuthService(db);
 let currentServer: Server | null = null;
 let createdTicketId: string | null = null;
 let failed = false;
 
 try {
-  const { server, base } = await startServer(db);
+  const { server, base } = await startServer(db, auth);
   currentServer = server;
 
   console.log(`[Smoke] Test server running at ${base}`);
 
-  console.log("[Smoke] 1. Проверка авторизации трёх пользователей через /api/auth/login...");
+  console.log("[Smoke] 1. Проверка авторизации трёх пользователей через общий /api/auth/login...");
   const dutyLoginRes = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username: "duty", password: "duty123" }),
+    body: JSON.stringify({ login: "duty", password: "demo-duty-2026" }),
   });
   assert.equal(dutyLoginRes.status, 200);
-  const dutyAuth = loginResponseSchema.parse(await dutyLoginRes.json());
+  const dutyAuth = (await dutyLoginRes.json()) as {
+    token: string;
+    user: { id: string; role: string };
+  };
   assert.equal(dutyAuth.user.role, "DUTY");
   const dutyHeaders = {
     "content-type": "application/json",
@@ -96,10 +88,13 @@ try {
   const engineerLoginRes = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username: "engineer", password: "engineer123" }),
+    body: JSON.stringify({ login: "engineer", password: "demo-engineer-2026" }),
   });
   assert.equal(engineerLoginRes.status, 200);
-  const engineerAuth = loginResponseSchema.parse(await engineerLoginRes.json());
+  const engineerAuth = (await engineerLoginRes.json()) as {
+    token: string;
+    user: { id: string; role: string };
+  };
   assert.equal(engineerAuth.user.role, "ENGINEER");
   const engineerHeaders = {
     "content-type": "application/json",
@@ -109,10 +104,13 @@ try {
   const directorLoginRes = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username: "director", password: "director123" }),
+    body: JSON.stringify({ login: "director", password: "demo-director-2026" }),
   });
   assert.equal(directorLoginRes.status, 200);
-  const directorAuth = loginResponseSchema.parse(await directorLoginRes.json());
+  const directorAuth = (await directorLoginRes.json()) as {
+    token: string;
+    user: { id: string; role: string };
+  };
   assert.equal(directorAuth.user.role, "DIRECTOR");
   const directorHeaders = {
     "content-type": "application/json",
@@ -122,17 +120,32 @@ try {
   const invalidLoginRes = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username: "duty", password: "wrong-password" }),
+    body: JSON.stringify({ login: "duty", password: "wrong-password" }),
   });
-  await expectProblem(invalidLoginRes, 400, "/api/auth/login");
+  assert.equal(invalidLoginRes.status, 401);
 
-  console.log("[Smoke] 2. Проверка RBAC и отказ произвольным заголовкам без токена...");
+  console.log("[Smoke] 2. Проверка защиты всех эндпоинтов от неавторизованных запросов и RBAC...");
+  const anonPostRes = await fetch(`${base}/api/requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "INSPECTION",
+      equipmentId: randomUUID(),
+      description: "Анонимный запрос",
+      initialDeadline: new Date().toISOString(),
+    }),
+  });
+  await expectProblem(anonPostRes, 401, "/api/requests");
+
+  const anonGetRes = await fetch(`${base}/api/requests`);
+  await expectProblem(anonGetRes, 401, "/api/requests");
+
   const spoofRes = await fetch(`${base}/api/requests`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-user-role": "DUTY",
-      "x-user-id": PREDEFINED_USERS.duty.id,
+      "x-user-id": dutyAuth.user.id,
     },
     body: JSON.stringify({
       type: "INSPECTION",
@@ -193,7 +206,7 @@ try {
       description: `Плановый осмотр оборудования ${realEquipment.name}`,
       priority: "HIGH",
       initialDeadline,
-      assigneeId: PREDEFINED_USERS.engineer.id,
+      assigneeId: engineerAuth.user.id,
     }),
   });
   assert.equal(createRes.status, 201);
@@ -202,10 +215,12 @@ try {
   assert.equal(createRes.headers.get("location"), `/api/requests/${createdTicketId}`);
   assert.equal(createdTicket.status, "NEW");
   assert.equal(createdTicket.equipmentId, realEquipment.id);
-  assert.equal(createdTicket.authorId, PREDEFINED_USERS.duty.id);
-  assert.equal(createdTicket.assigneeId, PREDEFINED_USERS.engineer.id);
+  assert.equal(createdTicket.authorId, dutyAuth.user.id);
+  assert.equal(createdTicket.assigneeId, engineerAuth.user.id);
 
-  const initialDetailRes = await fetch(`${base}/api/requests/${createdTicketId}`);
+  const initialDetailRes = await fetch(`${base}/api/requests/${createdTicketId}`, {
+    headers: dutyHeaders,
+  });
   const initialDetail = ticketDetailResponseSchema.parse(await initialDetailRes.json());
   assert.equal(initialDetail.auditLogs.length, 2);
   assert.equal(initialDetail.auditLogs[0]?.action, "CREATED");
@@ -303,15 +318,19 @@ try {
   console.log(
     "[Smoke] 8. Проверка списка, просрочки и нагрузки по сохранённым данным PostgreSQL...",
   );
-  const listRes = await fetch(`${base}/api/requests`);
+  const listRes = await fetch(`${base}/api/requests`, { headers: dutyHeaders });
   assert.equal(listRes.status, 200);
   const listData = ticketListResponseSchema.parse(await listRes.json());
   assert.ok(listData.items.some((item) => item.id === createdTicketId));
 
-  const overdueRes = await fetch(`${base}/api/requests/analytics/overdue`);
+  const overdueRes = await fetch(`${base}/api/requests/analytics/overdue`, {
+    headers: dutyHeaders,
+  });
   assert.equal(overdueRes.status, 200);
 
-  const workloadRes = await fetch(`${base}/api/requests/analytics/workload`);
+  const workloadRes = await fetch(`${base}/api/requests/analytics/workload`, {
+    headers: dutyHeaders,
+  });
   assert.equal(workloadRes.status, 200);
   workloadListResponseSchema.parse(await workloadRes.json());
 
@@ -323,11 +342,23 @@ try {
   await db.$disconnect();
 
   const restartedDb = createDatabase(envResult.data.DATABASE_URL);
+  const restartedAuth = createAuthService(restartedDb);
   db = restartedDb;
-  const restarted = await startServer(restartedDb);
+  auth = restartedAuth;
+  const restarted = await startServer(restartedDb, restartedAuth);
   currentServer = restarted.server;
 
-  const afterRestartRes = await fetch(`${restarted.base}/api/requests/${createdTicketId}`);
+  const afterRestartLoginRes = await fetch(`${restarted.base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ login: "duty", password: "demo-duty-2026" }),
+  });
+  assert.equal(afterRestartLoginRes.status, 200);
+  const afterRestartAuth = (await afterRestartLoginRes.json()) as { token: string };
+
+  const afterRestartRes = await fetch(`${restarted.base}/api/requests/${createdTicketId}`, {
+    headers: { authorization: `Bearer ${afterRestartAuth.token}` },
+  });
   assert.equal(afterRestartRes.status, 200);
   const afterRestartTicket = ticketDetailResponseSchema.parse(await afterRestartRes.json());
   assert.equal(afterRestartTicket.id, createdTicketId);
@@ -354,7 +385,8 @@ try {
   if (db) {
     if (createdTicketId) {
       try {
-        await db.$executeRawUnsafe(`DELETE FROM "Ticket" WHERE "id" = $1;`, createdTicketId);
+        await db.ticketAuditLog.deleteMany({ where: { ticketId: createdTicketId } });
+        await db.ticket.delete({ where: { id: createdTicketId } });
       } catch {}
     }
     await db.$disconnect();
