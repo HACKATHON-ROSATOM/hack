@@ -18,7 +18,7 @@ async function submit() {
   loading.value = true
   formError.value = ''
   try {
-    await userStore.login(state.login.trim(), state.password)
+    await userStore.login(state.login.trim(), state.password.trim())
     state.password = ''
     await navigateTo('/')
   } catch (error) {
@@ -40,11 +40,11 @@ async function submit() {
 
         <UForm :state="state" class="space-y-4" @submit="submit">
           <UFormField name="login" label="Логин" required>
-            <UInput v-model="state.login" name="username" placeholder="Введите логин" autocomplete="username" size="xl" class="w-full" />
+            <UInput v-model.trim="state.login" name="username" placeholder="Введите логин" autocomplete="username" size="xl" class="w-full" />
           </UFormField>
 
           <UFormField name="password" label="Пароль" required>
-            <UInput v-model="state.password" type="password" name="password" placeholder="Введите пароль" autocomplete="current-password" size="xl" class="w-full" />
+            <UInput v-model.trim="state.password" type="password" name="password" placeholder="Введите пароль" autocomplete="current-password" size="xl" class="w-full" />
           </UFormField>
 
           <p v-if="formError" role="alert" class="text-sm text-red-600">{{ formError }}</p>

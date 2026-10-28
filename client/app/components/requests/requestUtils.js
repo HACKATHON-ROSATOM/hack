@@ -15,6 +15,17 @@ export function inputDate(value) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
 
+export function splitDeadline(value) {
+  const local = inputDate(value)
+  return { date: local.slice(0, 10), time: local.slice(11, 16) }
+}
+
+export function joinDeadline(date, time) {
+  if (!date || !time) return ''
+  const parsed = new Date(`${date}T${time}`)
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString()
+}
+
 export async function loadEquipment(store) {
   const first = await store.api('/api/equipment?page=1&pageSize=100')
   const items = [...first.items]

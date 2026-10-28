@@ -42,10 +42,9 @@ export const createRequestSchema = z
       .max(2000)
       .meta({ description: "Подробное описание проблемы или объёма работ (1–2000 символов)" }),
     priority: prioritySchema.default("MEDIUM"),
-    initialDeadline: z
-      .string()
-      .datetime()
-      .meta({ description: "Первоначальный плановый срок в формате ISO 8601" }),
+    initialDeadline: z.string().datetime().meta({
+      description: "Первоначальный плановый срок в формате ISO 8601. Не может быть в прошлом.",
+    }),
     assigneeId: z
       .string()
       .uuid()
