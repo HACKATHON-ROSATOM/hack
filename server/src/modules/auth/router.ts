@@ -10,21 +10,21 @@ export function createAuthModule(auth: AuthService): ApiModule {
       method: "post",
       path: "/api/auth/login",
       operationId: "login",
-      summary: "Sign in",
-      description: "Query parameters are not supported.",
+      summary: "Войти в систему",
+      description: "Параметры запроса не поддерживаются.",
       request: {
         query: loginQuerySchema,
         body: { required: true, content: { "application/json": { schema: loginSchema } } },
       },
       responses: {
         200: {
-          description: "Authenticated",
+          description: "Вход выполнен",
           content: { "application/json": { schema: loginResponseSchema } },
         },
-        400: problemResponse("Invalid input"),
-        401: problemResponse("Invalid credentials"),
-        415: problemResponse("Expected JSON"),
-        500: problemResponse("Internal error"),
+        400: problemResponse("Некорректные входные данные"),
+        401: problemResponse("Неверный логин или пароль"),
+        415: problemResponse("Ожидается JSON"),
+        500: problemResponse("Внутренняя ошибка сервера"),
       },
     },
     async (req, res) => {

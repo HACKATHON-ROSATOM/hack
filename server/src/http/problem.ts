@@ -11,7 +11,10 @@ export const problemSchema = z
     detail: z.string(),
     instance: z.string(),
   })
-  .meta({ id: "Problem", description: "RFC 9457 error without stack traces or database details." });
+  .meta({
+    id: "Problem",
+    description: "Ошибка в формате RFC 9457 без трассировки стека и сведений о базе данных.",
+  });
 
 export class ApiError extends Error {
   readonly status: 400 | 401 | 403 | 404 | 409 | 415;

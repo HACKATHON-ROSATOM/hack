@@ -41,7 +41,7 @@ describe("authentication", () => {
     const module = createAuthModule(auth);
     const document = generateOpenApi([module]);
     expect(document.paths?.["/api/auth/login"]?.post?.description).toContain(
-      "Query parameters are not supported",
+      "Параметры запроса не поддерживаются",
     );
     const app = express();
     app.use(express.json());

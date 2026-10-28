@@ -28,9 +28,9 @@ export function createNotesModule(db: Database): ApiModule {
       method: "post",
       path: basePath,
       operationId: "createNote",
-      summary: "Create a note",
+      summary: "Создать заметку",
       description:
-        "No query parameters are accepted. Content is trimmed before validating the 1–2000 Unicode code point limit. JSON bodies are limited to 16 KiB.",
+        "Параметры запроса не поддерживаются. Пробелы по краям текста удаляются перед проверкой длины от 1 до 2000 кодовых точек Unicode. Размер JSON ограничен 16 КиБ.",
       request: {
         query: noQuerySchema,
         body: {
@@ -45,19 +45,23 @@ export function createNotesModule(db: Database): ApiModule {
       },
       responses: {
         201: {
-          description: "Created",
+          description: "Заметка создана",
           headers: z.object({
             Location: z.string().meta({
-              description: "Relative path to the created note",
+              description: "Относительный путь к созданной заметке",
               example: `${basePath}/8e5c7ee2-5f05-4f40-b6a2-c62bce1c5328`,
             }),
           }),
           content: { "application/json": { schema: noteResponseSchema } },
         },
-        400: problemResponse("Invalid JSON, body, UUID, or unexpected query parameters (400)"),
-        413: problemResponse("Request body exceeds 16 KiB (413)"),
-        415: problemResponse("Missing or unsupported media type, charset, or encoding (415)"),
-        500: problemResponse("Generic internal server failure (500)"),
+        400: problemResponse(
+          "Некорректный JSON, тело запроса, UUID или неожиданные параметры запроса (400)",
+        ),
+        413: problemResponse("Размер тела запроса превышает 16 КиБ (413)"),
+        415: problemResponse(
+          "Отсутствует или не поддерживается тип содержимого, кодировка символов или тела запроса (415)",
+        ),
+        500: problemResponse("Внутренняя ошибка сервера (500)"),
       },
     },
     async (req, res) => {
@@ -78,18 +82,20 @@ export function createNotesModule(db: Database): ApiModule {
       method: "get",
       path: `${basePath}/{id}`,
       operationId: "getNote",
-      summary: "Read a note",
+      summary: "Получить заметку",
       description:
-        "No query parameters are accepted. Invalid UUIDs return 400 before database access.",
+        "Параметры запроса не поддерживаются. Некорректный UUID возвращает ошибку 400 до обращения к базе данных.",
       request: { params: noteParamsSchema, query: noQuerySchema },
       responses: {
         200: {
-          description: "Found",
+          description: "Заметка найдена",
           content: { "application/json": { schema: noteResponseSchema } },
         },
-        400: problemResponse("Invalid JSON, body, UUID, or unexpected query parameters (400)"),
-        404: problemResponse("Note does not exist (404)"),
-        500: problemResponse("Generic internal server failure (500)"),
+        400: problemResponse(
+          "Некорректный JSON, тело запроса, UUID или неожиданные параметры запроса (400)",
+        ),
+        404: problemResponse("Заметка не найдена (404)"),
+        500: problemResponse("Внутренняя ошибка сервера (500)"),
       },
     },
     async (req, res) => {
@@ -106,15 +112,17 @@ export function createNotesModule(db: Database): ApiModule {
       method: "delete",
       path: `${basePath}/{id}`,
       operationId: "deleteNote",
-      summary: "Delete a note",
+      summary: "Удалить заметку",
       description:
-        "No query parameters are accepted. Invalid UUIDs return 400 before database access. Repeated deletion returns 404.",
+        "Параметры запроса не поддерживаются. Некорректный UUID возвращает ошибку 400 до обращения к базе данных. Повторное удаление возвращает 404.",
       request: { params: noteParamsSchema, query: noQuerySchema },
       responses: {
-        204: { description: "Deleted; empty response body" },
-        400: problemResponse("Invalid JSON, body, UUID, or unexpected query parameters (400)"),
-        404: problemResponse("Note does not exist (404)"),
-        500: problemResponse("Generic internal server failure (500)"),
+        204: { description: "Заметка удалена; тело ответа пустое" },
+        400: problemResponse(
+          "Некорректный JSON, тело запроса, UUID или неожиданные параметры запроса (400)",
+        ),
+        404: problemResponse("Заметка не найдена (404)"),
+        500: problemResponse("Внутренняя ошибка сервера (500)"),
       },
     },
     async (req, res) => {

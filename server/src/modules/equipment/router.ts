@@ -16,17 +16,17 @@ export function createEquipmentModule(db: Database): ApiModule {
       method: "get",
       path: "/api/equipment",
       operationId: "listEquipment",
-      summary: "List equipment",
+      summary: "Получить список оборудования",
       description:
-        "Pages start at 1; pageSize defaults to 20 and is limited to 100. Search matches name, external ID or hierarchy location without case sensitivity.",
+        "Нумерация страниц начинается с 1; pageSize по умолчанию равен 20 и не может превышать 100. Поиск по названию, внешнему идентификатору или расположению в иерархии не учитывает регистр.",
       request: { query: equipmentListQuerySchema },
       responses: {
         200: {
-          description: "Equipment page",
+          description: "Страница списка оборудования",
           content: { "application/json": { schema: equipmentListSchema } },
         },
-        400: problemResponse("Invalid query"),
-        500: problemResponse("Internal error"),
+        400: problemResponse("Некорректные параметры запроса"),
+        500: problemResponse("Внутренняя ошибка сервера"),
       },
     },
     async (req, res) => {
@@ -102,16 +102,16 @@ export function createEquipmentModule(db: Database): ApiModule {
       method: "get",
       path: "/api/equipment/{id}",
       operationId: "getEquipment",
-      summary: "Read equipment and history",
+      summary: "Получить оборудование и историю обслуживания",
       request: { params: equipmentParamsSchema, query: emptyQuerySchema },
       responses: {
         200: {
-          description: "Equipment detail",
+          description: "Карточка оборудования",
           content: { "application/json": { schema: equipmentDetailSchema } },
         },
-        400: problemResponse("Invalid identifier or query"),
-        404: problemResponse("Equipment not found"),
-        500: problemResponse("Internal error"),
+        400: problemResponse("Некорректный идентификатор или параметры запроса"),
+        404: problemResponse("Оборудование не найдено"),
+        500: problemResponse("Внутренняя ошибка сервера"),
       },
     },
     async (req, res) => {
