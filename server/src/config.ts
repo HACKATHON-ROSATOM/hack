@@ -17,4 +17,17 @@ export const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DEBUG: z.string().default(""),
   DATABASE_URL: databaseUrlSchema,
+  IEC104_HOST: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+  IEC104_PORT: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z
+      .string()
+      .regex(/^[0-9]+$/)
+      .transform(Number)
+      .pipe(z.number().int().min(1).max(65535))
+      .optional(),
+  ),
 });

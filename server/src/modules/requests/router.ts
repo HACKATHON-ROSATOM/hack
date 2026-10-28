@@ -6,6 +6,7 @@ import { ApiError } from "../../http/problem.ts";
 import type { AuthService } from "../auth/service.ts";
 import { RequestsRepository } from "./repository.ts";
 import {
+  attachSnapshotRequestSchema,
   assignRequestSchema,
   convertTypeRequestSchema,
   createRequestSchema,
@@ -222,6 +223,46 @@ export function createRequestsModule(
       const caller = service.getCaller(req);
       const ticket = await service.getTicket(params.data.id, caller);
       res.json(ticket);
+    },
+  );
+
+  module.register(
+    {
+      method: "post",
+      path: `${basePath}/{id}/snapshot`,
+      operationId: "attachRequestSnapshot",
+      security: [{ bearerAuth: [] }],
+      summary: "Прикрепить неизменяемый снимок статуса ВЭУ",
+      request: {
+        params: requestParamsSchema,
+        query: noQuerySchema,
+        body: {
+          required: true,
+          content: { "application/json": { schema: attachSnapshotRequestSchema } },
+        },
+      },
+      responses: {
+        200: {
+          description: "Снимок прикреплён.",
+          content: { "application/json": { schema: ticketDetailResponseSchema } },
+        },
+        400: problemResponse("Некорректный запрос."),
+        401: problemResponse("Требуется авторизация."),
+        403: problemResponse("Запрещено для текущей роли."),
+        404: problemResponse("Заявка не найдена."),
+        409: problemResponse("Снимок уже прикреплён или наблюдение отсутствует."),
+        503: problemResponse("Мониторинг недоступен."),
+      },
+    },
+    async (req, res) => {
+      if (!req.is("application/json")) throw new ApiError(415, "Expected application/json.");
+      const params = requestParamsSchema.safeParse(req.params);
+      if (!params.success) throw new ApiError(400, "Invalid ticket UUID.");
+      const body = attachSnapshotRequestSchema.safeParse(req.body);
+      if (!body.success) throw new ApiError(400, "Invalid turbine number.");
+      const caller = service.getCaller(req);
+      const updated = await service.attachSnapshot(params.data.id, body.data.turbineNumber, caller);
+      res.json(updated);
     },
   );
 

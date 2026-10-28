@@ -2,6 +2,7 @@ import type { Request } from "express";
 import type { Database } from "../../database.ts";
 import { ApiError } from "../../http/problem.ts";
 import type { AuthService } from "../auth/service.ts";
+import type { MonitoringService, StatusEvent } from "../monitoring/service.ts";
 import type { IRequestsRepository } from "./repository.ts";
 import type { Priority, TicketStatus, TicketWithDetails, UserRole } from "./types.ts";
 
@@ -41,11 +42,18 @@ export class RequestsService {
   private repo: IRequestsRepository;
   private db?: Database | undefined;
   private auth?: AuthService | undefined;
+  private readonly monitoring: Pick<MonitoringService, "getSnapshot"> | undefined;
 
-  constructor(repo: IRequestsRepository, db?: Database, auth?: AuthService) {
+  constructor(
+    repo: IRequestsRepository,
+    db?: Database,
+    auth?: AuthService,
+    monitoring?: Pick<MonitoringService, "getSnapshot">,
+  ) {
     this.repo = repo;
     this.db = db;
     this.auth = auth;
+    this.monitoring = monitoring;
   }
 
   getCaller(req: Request): CallerContext {
@@ -82,6 +90,23 @@ export class RequestsService {
         );
       }
     }
+  }
+
+  processTelemetry(snapshot: StatusEvent): Promise<TicketWithDetails | null> {
+    return this.repo.processTelemetry(snapshot);
+  }
+
+  async attachSnapshot(
+    ticketId: string,
+    turbineNumber: number,
+    caller: CallerContext,
+  ): Promise<TicketWithDetails> {
+    this.assertRole(caller, ["DUTY", "DIRECTOR"], "Прикрепление снимка");
+    if (!caller.userId) throw new UnauthorizedError("Пользователь не идентифицирован.");
+    if (!this.monitoring) throw new ApiError(503, "Мониторинг недоступен.");
+    const snapshot = await this.monitoring.getSnapshot(turbineNumber);
+    if (!snapshot) throw new ApiError(409, "Для этой ВЭУ нет снимка статуса.");
+    return this.repo.attachSnapshot(ticketId, snapshot, caller.userId);
   }
 
   async createTicket(

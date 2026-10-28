@@ -17,9 +17,9 @@ export const problemSchema = z
   });
 
 export class ApiError extends Error {
-  readonly status: 400 | 401 | 403 | 404 | 409 | 415;
+  readonly status: 400 | 401 | 403 | 404 | 409 | 415 | 503;
 
-  constructor(status: 400 | 401 | 403 | 404 | 409 | 415, detail: string) {
+  constructor(status: 400 | 401 | 403 | 404 | 409 | 415 | 503, detail: string) {
     super(detail);
     this.name = "ApiError";
     this.status = status;

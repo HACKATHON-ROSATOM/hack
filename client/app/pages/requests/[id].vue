@@ -20,10 +20,12 @@ const dueTime = ref('')
 const managementComment = ref('')
 const workComment = ref('')
 const closingComment = ref('')
+const turbineNumberDraft = ref('')
 const priorityOptions = Object.entries(priorityLabels).map(([value, label]) => ({ value, label }))
 const assigneeOptions = computed(() => engineers.value.map((item) => ({ label: item.name, value: item.id })))
 const isAssignedEngineer = computed(() => userStore.role === 'engineer' && userStore.user?.id === request.value?.assigneeId)
 const canAssign = computed(() => ['dispatcher', 'director'].includes(userStore.role) && request.value?.status !== 'COMPLETED')
+const canAttachSnapshot = computed(() => ['dispatcher', 'director'].includes(userStore.role) && request.value?.source === 'MANUAL' && !request.value?.snapshot)
 
 function sameInstant(left, right) {
   if (!left && !right) return true
@@ -55,7 +57,7 @@ async function load() {
   error.value = ''
   try {
     const [data, people, allUsers] = await Promise.all([userStore.api(`/api/requests/${route.params.id}`), userStore.api('/api/engineers'), userStore.api('/api/users')])
-    const object = await userStore.api(`/api/equipment/${data.equipmentId}`)
+    const object = data.equipmentId ? await userStore.api(`/api/equipment/${data.equipmentId}`) : null
     engineers.value = people.items
     users.value = allUsers.items
     equipment.value = object
@@ -69,7 +71,7 @@ async function update(path, method, body) {
   actionError.value = ''
   busy.value = true
   try {
-    const data = await userStore.api(`/api/requests/${request.value.id}/${path}`, { method, body })
+    const data = await userStore.api(`/api/requests/${request.value.id}${path ? `/${path}` : ''}`, { method, body })
     setRequest(data)
     return true
   } catch (err) { actionError.value = apiProblem(err).detail; return false } finally { busy.value = false }
@@ -89,6 +91,16 @@ async function schedule() {
   if (!body.priority && !body.currentDeadline) { actionError.value = 'Измените срок или приоритет.'; return }
   if (managementComment.value.trim()) body.comment = managementComment.value.trim()
   await update('schedule', 'PATCH', body)
+}
+async function setAutoDeadline() {
+  const deadline = joinDeadline(dueDate.value, dueTime.value)
+  if (!deadline) { actionError.value = 'Укажите корректный срок.'; return }
+  await update('schedule', 'PATCH', { currentDeadline: deadline, ...(managementComment.value.trim() ? { comment: managementComment.value.trim() } : {}) })
+}
+async function attachSnapshot() {
+  const number = Number(turbineNumberDraft.value)
+  if (!turbineNumberDraft.value || !Number.isInteger(number) || number < 1) { actionError.value = 'Укажите корректный номер ВЭУ.'; return }
+  if (await update('snapshot', 'POST', { turbineNumber: number })) turbineNumberDraft.value = ''
 }
 async function transition(toStatus) {
   const comment = (toStatus === 'COMPLETED' ? closingComment.value : workComment.value).trim()
@@ -120,16 +132,38 @@ async function convert() {
         <dl class="grid gap-4 sm:grid-cols-2">
           <div><dt class="text-sm text-gray-600">Тип</dt><dd>{{ typeLabels[request.type] || request.type }}</dd></div>
           <div><dt class="text-sm text-gray-600">Источник</dt><dd>{{ request.source === 'AUTO' ? 'Автоматическая' : 'Ручная' }}</dd></div>
-          <div><dt class="text-sm text-gray-600">Объект</dt><dd><NuxtLink :to="'/equipment/' + request.equipmentId" class="text-brand hover:text-brand-hover">{{ equipment.name }}{{ equipment.externalId ? ` (${equipment.externalId})` : '' }}</NuxtLink></dd></div>
+          <div><dt class="text-sm text-gray-600">Объект</dt><dd><NuxtLink v-if="equipment && request.equipmentId" :to="'/equipment/' + request.equipmentId" class="text-brand hover:text-brand-hover">{{ equipment.name }}{{ equipment.externalId ? ` (${equipment.externalId})` : '' }}</NuxtLink><span v-else>Не указано</span></dd></div>
+          <div v-if="request.telemetryTurbineId || request.snapshot?.turbineNumber != null"><dt class="text-sm text-gray-600">Телеметрическая ВЭУ</dt><dd>{{ request.snapshot?.turbineNumber != null ? `ВЭУ №${request.snapshot.turbineNumber}` : request.telemetryTurbineId }}</dd></div>
           <div><dt class="text-sm text-gray-600">Приоритет</dt><dd><UBadge :color="priorityColors[request.priority] || 'neutral'" variant="soft">{{ priorityLabels[request.priority] || request.priority }}</UBadge></dd></div>
-          <div><dt class="text-sm text-gray-600">Плановый срок</dt><dd :class="request.isOverdue ? 'font-medium text-error' : 'text-gray-900'">{{ formatDate(request.currentDeadline) }}</dd></div>
+          <div><dt class="text-sm text-gray-600">Плановый срок</dt><dd :class="request.isOverdue ? 'font-medium text-error' : 'text-gray-900'">{{ formatDate(request.currentDeadline) }}<span v-if="request.isOverdue"> (просрочена)</span></dd></div>
           <div><dt class="text-sm text-gray-600">Исполнитель</dt><dd>{{ request.assigneeId ? person(request.assigneeId) : 'Не назначен' }}</dd></div>
-          <div><dt class="text-sm text-gray-600">Автор</dt><dd>{{ person(request.authorId) }}</dd></div>
+          <div><dt class="text-sm text-gray-600">Автор</dt><dd>{{ request.authorId ? person(request.authorId) : 'Система' }}</dd></div>
           <div><dt class="text-sm text-gray-600">Создана</dt><dd>{{ formatDate(request.createdAt) }}</dd></div>
           <div v-if="request.completedAt"><dt class="text-sm text-gray-600">Завершена</dt><dd>{{ formatDate(request.completedAt) }}</dd></div>
         </dl>
         <div class="mt-4"><p class="text-sm text-gray-600">Описание</p><p class="whitespace-pre-wrap">{{ request.description }}</p></div>
         <div v-if="request.completionComment" class="mt-4"><p class="text-sm text-gray-600">Результат работы</p><p class="whitespace-pre-wrap">{{ request.completionComment }}</p></div>
+      </UCard>
+      <UCard v-if="request.snapshot || canAttachSnapshot" class="bg-white ring-1 ring-brand/15">
+        <h2 class="mb-4 text-lg font-semibold text-gray-900">Снимок телеметрии</h2>
+        <template v-if="request.snapshot">
+          <p class="mb-4 text-sm text-gray-600">Сохранённый снимок не обновляется при изменении телеметрии. Актуальность указана на момент сохранения.</p>
+          <dl class="grid gap-4 sm:grid-cols-2">
+            <div><dt class="text-sm text-gray-600">Идентификатор ВЭУ</dt><dd>{{ request.snapshot.turbineId }}</dd></div>
+            <div><dt class="text-sm text-gray-600">Номер ВЭУ</dt><dd>{{ request.snapshot.turbineNumber }}</dd></div>
+            <div><dt class="text-sm text-gray-600">CA</dt><dd>{{ request.snapshot.ca }}</dd></div>
+            <div><dt class="text-sm text-gray-600">IOA</dt><dd>{{ request.snapshot.ioa }}</dd></div>
+            <div><dt class="text-sm text-gray-600">Значение</dt><dd>{{ request.snapshot.value }}</dd></div>
+            <div><dt class="text-sm text-gray-600">Статус</dt><dd>{{ request.snapshot.status }}</dd></div>
+            <div><dt class="text-sm text-gray-600">Время приёма</dt><dd>{{ formatDate(request.snapshot.receivedAt) }}</dd></div>
+            <div><dt class="text-sm text-gray-600">Актуальность при сохранении</dt><dd>{{ request.snapshot.fresh ? 'Актуален' : 'Не актуален' }}</dd></div>
+          </dl>
+        </template>
+        <div v-else class="space-y-4">
+          <p class="text-sm text-gray-600">Можно прикрепить один снимок текущей телеметрии. После сохранения изменить его нельзя.</p>
+          <UFormField label="Номер ВЭУ" required><UInput v-model="turbineNumberDraft" type="number" min="1" step="1" class="w-full" /></UFormField>
+          <UButton :disabled="busy" @click="attachSnapshot">Прикрепить снимок</UButton>
+        </div>
       </UCard>
       <p v-if="actionError" role="alert" class="text-red-700">{{ actionError }}</p>
       <UCard v-if="isAssignedEngineer && request.status !== 'COMPLETED'" class="bg-white ring-1 ring-brand/15">
@@ -151,14 +185,15 @@ async function convert() {
         <div class="space-y-4">
           <UFormField label="Исполнитель"><USelect v-model="assigneeDraft" :items="assigneeOptions" value-key="value" placeholder="Выберите инженера" class="w-full" /><p v-if="!engineers.length" class="mt-1 text-sm text-gray-600">Нет доступных инженеров.</p></UFormField>
           <div v-if="userStore.role === 'director'" class="grid gap-4 sm:grid-cols-3"><UFormField label="Приоритет"><USelect v-model="priorityDraft" :items="priorityOptions" value-key="value" class="w-full" /></UFormField><UFormField label="Дата"><UInput v-model="dueDate" type="date" class="w-full" /></UFormField><UFormField label="Время"><UInput v-model="dueTime" type="time" class="w-full" /></UFormField></div>
+          <div v-if="userStore.role === 'dispatcher' && request.source === 'AUTO'" class="grid gap-4 sm:grid-cols-2"><UFormField label="Дата"><UInput v-model="dueDate" type="date" class="w-full" /></UFormField><UFormField label="Время"><UInput v-model="dueTime" type="time" class="w-full" /></UFormField></div>
           <UFormField label="Комментарий к изменению"><UTextarea v-model.trim="managementComment" maxlength="1000" :rows="2" class="w-full" /></UFormField>
-          <div class="flex flex-wrap gap-2"><UButton color="primary" :disabled="busy || !engineers.length" @click="assign">Назначить исполнителя</UButton><UButton v-if="userStore.role === 'director'" color="success" variant="soft" :disabled="busy" @click="schedule">Сохранить срок и приоритет</UButton></div>
+          <div class="flex flex-wrap gap-2"><UButton color="primary" :disabled="busy || !engineers.length" @click="assign">Назначить исполнителя</UButton><UButton v-if="userStore.role === 'director'" color="success" variant="soft" :disabled="busy" @click="schedule">Сохранить срок и приоритет</UButton><UButton v-if="userStore.role === 'dispatcher' && request.source === 'AUTO'" color="success" variant="soft" :disabled="busy" @click="setAutoDeadline">Сохранить срок</UButton></div>
         </div>
       </UCard>
       <UCard class="bg-white ring-1 ring-brand/15">
         <h2 class="mb-4 text-lg font-semibold text-gray-900">Журнал действий</h2>
         <p v-if="!request.auditLogs.length" class="text-gray-600">Записей пока нет.</p>
-        <ol v-else class="divide-y divide-gray-200"><li v-for="log in request.auditLogs" :key="log.id" class="space-y-1 py-3"><p class="font-medium">{{ actionLabels[log.action] || log.action }}</p><p class="text-sm text-gray-600">{{ formatDate(log.createdAt) }} · {{ person(log.authorId) }}</p><p v-if="log.fieldName" class="text-sm">{{ auditValue(log, log.oldValue) }} → {{ auditValue(log, log.newValue) }}</p><p v-if="log.comment" class="whitespace-pre-wrap text-sm">{{ log.comment }}</p></li></ol>
+        <ol v-else class="divide-y divide-gray-200"><li v-for="log in request.auditLogs" :key="log.id" class="space-y-1 py-3"><p class="font-medium">{{ actionLabels[log.action] || log.action }}</p><p class="text-sm text-gray-600">{{ formatDate(log.createdAt) }} · {{ log.authorId ? person(log.authorId) : 'Система' }}</p><p v-if="log.fieldName" class="text-sm">{{ auditValue(log, log.oldValue) }} → {{ auditValue(log, log.newValue) }}</p><p v-if="log.comment" class="whitespace-pre-wrap text-sm">{{ log.comment }}</p></li></ol>
       </UCard>
     </template>
   </main>
